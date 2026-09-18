@@ -34,6 +34,18 @@ class VideoGenerationUnavailable(RuntimeError):
     pass
 
 
+def paid_providers_enabled() -> bool:
+    return os.getenv(
+        "MORROWGLASS_ALLOW_PAID_PROVIDERS",
+        "",
+    ).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def mpt_openai_image_ready() -> bool:
     return bool(material.is_openai_image_enabled())
 
@@ -81,6 +93,12 @@ def _resolve_image_provider(
         return "wikimedia", None
 
     if provider == "mpt_openai":
+        if not paid_providers_enabled():
+            raise ImageGenerationUnavailable(
+                "Paid image providers are disabled in FREE-ONLY mode. "
+                "Morrowglass will not call them unless "
+                "MORROWGLASS_ALLOW_PAID_PROVIDERS=1 is set explicitly."
+            )
         if not mpt_openai_image_ready():
             raise ImageGenerationUnavailable(
                 "MoneyPrinterTurbo OpenAI-compatible image generation "
