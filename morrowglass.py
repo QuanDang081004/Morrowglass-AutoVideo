@@ -426,7 +426,10 @@ def cmd_run(args) -> int:
             asset_mode=AssetMode(
                 args.asset_mode
             ),
-            aspect=args.aspect,
+            aspect=(
+                args.aspect
+                or "16:9"
+            ),
             use_llm=not args.no_llm,
         )
     else:
@@ -436,9 +439,10 @@ def cmd_run(args) -> int:
         project.asset_mode = AssetMode(
             args.asset_mode
         )
-        project.set_aspect(
-            args.aspect
-        )
+        if args.aspect:
+            project.set_aspect(
+                args.aspect
+            )
         if args.voice:
             project.voice_name = args.voice
         project.save(manifest)
@@ -1022,7 +1026,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--aspect",
         choices=["16:9", "9:16"],
-        default="16:9",
+        default=None,
+        help=(
+            "Output format. Existing projects keep their "
+            "saved format when this option is omitted."
+        ),
     )
     run.add_argument(
         "--asset-mode",
