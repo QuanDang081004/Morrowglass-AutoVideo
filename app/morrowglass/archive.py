@@ -73,6 +73,84 @@ def _license_is_reusable(
     )
 
 
+def _tokens(value: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(
+            r"[^\W_][\w'-]*",
+            (value or "").lower(),
+            flags=re.UNICODE,
+        )
+        if len(token) >= 3
+    }
+
+
+def relevance_score(
+    asset: ArchiveAsset,
+    query: str,
+    visual_description: str = "",
+) -> float:
+    target = _tokens(
+        " ".join(
+            value
+            for value in (
+                query,
+                visual_description,
+            )
+            if value
+        )
+    )
+    if not target:
+        return 0.0
+
+    title_tokens = _tokens(
+        asset.title
+    )
+    desc_tokens = _tokens(
+        asset.description
+    )
+
+    title_overlap = len(
+        target & title_tokens
+    )
+    desc_overlap = len(
+        target & desc_tokens
+    )
+    coverage = len(
+        target
+        & (
+            title_tokens
+            | desc_tokens
+        )
+    ) / max(1, len(target))
+
+    return (
+        title_overlap * 3.0
+        + desc_overlap * 1.5
+        + coverage * 5.0
+    )
+
+
+def rank_archive_assets(
+    assets: list[ArchiveAsset],
+    *,
+    query: str,
+    visual_description: str = "",
+) -> list[ArchiveAsset]:
+    return sorted(
+        assets,
+        key=lambda asset: (
+            relevance_score(
+                asset,
+                query,
+                visual_description,
+            ),
+            len(asset.description),
+        ),
+        reverse=True,
+    )
+
+
 def search_wikimedia_images(
     query: str,
     *,
