@@ -17,7 +17,7 @@ from .generators import (
 )
 from .models import AssetMode, MorrowglassProject, VisualBible
 from .renderer import render_final_video
-from .timeline import assign_from_srt, parse_srt
+from .timeline import TIMELINE_VERSION, assign_from_srt, parse_srt
 
 
 class MorrowglassPipeline:
@@ -117,6 +117,7 @@ class MorrowglassPipeline:
             words_srt,
             audio_duration=duration,
         )
+        project.metadata["timeline_version"] = TIMELINE_VERSION
         project.save(Path(project_dir) / "project.json")
         return project
 
