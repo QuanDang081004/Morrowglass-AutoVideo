@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -193,6 +194,78 @@ def _save_uploaded_asset(
     target = folder / f"{scene_id}{suffix}"
     target.write_bytes(uploaded.getvalue())
     return target
+
+
+def _batch_asset_assignments(
+    project: MorrowglassProject,
+    uploads,
+) -> tuple[list[tuple[str, object]], list[str]]:
+    scene_ids = {
+        scene.scene_id
+        for scene in project.scenes
+    }
+    missing = [
+        scene.scene_id
+        for scene in project.scenes
+        if not scene.asset_path
+    ]
+
+    assignments: list[
+        tuple[str, object]
+    ] = []
+    unmatched = []
+    used: set[str] = set()
+
+    for uploaded in uploads:
+        stem = Path(
+            uploaded.name
+        ).stem.lower()
+        match = re.search(
+            r"scene[_ -]?(\d+)",
+            stem,
+        )
+        scene_id = ""
+        if match:
+            scene_id = (
+                f"scene_{int(match.group(1)):03d}"
+            )
+        if (
+            scene_id
+            and scene_id in scene_ids
+            and scene_id not in used
+        ):
+            assignments.append(
+                (scene_id, uploaded)
+            )
+            used.add(scene_id)
+        else:
+            unmatched.append(uploaded)
+
+    remaining = [
+        scene_id
+        for scene_id in missing
+        if scene_id not in used
+    ]
+    if (
+        unmatched
+        and len(unmatched)
+        == len(remaining)
+    ):
+        assignments.extend(
+            zip(
+                remaining,
+                unmatched,
+            )
+        )
+        unmatched = []
+
+    return (
+        assignments,
+        [
+            item.name
+            for item in unmatched
+        ],
+    )
 
 
 def _ensure_audio_timeline(
@@ -1524,6 +1597,75 @@ if project:
             st.video(
                 str(final_path)
             )
+
+    if missing:
+        st.subheader(
+            "Quick manual fallback"
+        )
+        st.caption(
+            "Drop all remaining assets at once. Files named "
+            "scene_001.*, scene_002.* are matched automatically. "
+            "If the number of unnamed files exactly matches the "
+            "missing scenes, upload order is used."
+        )
+        batch_uploads = st.file_uploader(
+            "Batch upload missing scene assets",
+            type=[
+                "png",
+                "jpg",
+                "jpeg",
+                "webp",
+                "bmp",
+                "mp4",
+                "mov",
+                "mkv",
+                "webm",
+                "gif",
+            ],
+            accept_multiple_files=True,
+            key="batch_scene_assets",
+        )
+        if (
+            batch_uploads
+            and st.button(
+                "Auto-match & save batch",
+                use_container_width=True,
+            )
+        ):
+            (
+                assignments,
+                unmatched_names,
+            ) = _batch_asset_assignments(
+                project,
+                batch_uploads,
+            )
+            for (
+                scene_id,
+                uploaded,
+            ) in assignments:
+                _save_uploaded_asset(
+                    project_dir,
+                    scene_id,
+                    uploaded,
+                )
+            resolve_assets(
+                project,
+                project_dir,
+            )
+            project.save(manifest)
+            if unmatched_names:
+                st.warning(
+                    "Could not safely match: "
+                    + ", ".join(
+                        unmatched_names
+                    )
+                )
+            if assignments:
+                st.success(
+                    f"Saved {len(assignments)} "
+                    "scene assets."
+                )
+                st.rerun()
 
     st.subheader(
         "Scene review / replacement"
