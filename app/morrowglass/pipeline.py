@@ -5,6 +5,7 @@ from typing import Callable
 from .assets import missing_scene_ids, resolve_assets, write_prompt_pack
 from .audio import synthesize_narration, transcribe_word_timing
 from .director import SceneDirector
+from .generators import generate_missing_scene_images
 from .models import AssetMode, MorrowglassProject, VisualBible
 from .renderer import render_final_video
 from .timeline import assign_from_srt, parse_srt
@@ -26,6 +27,11 @@ class MorrowglassPipeline:
         return project
     def refresh_assets(self, project: MorrowglassProject, project_dir: str | Path) -> list[str]:
         resolve_assets(project, project_dir); project.save(Path(project_dir) / "project.json"); return missing_scene_ids(project)
+    def auto_generate_images(self, project: MorrowglassProject, project_dir: str | Path, *, overwrite: bool = False) -> list[str]:
+        self.refresh_assets(project, project_dir)
+        failures = generate_missing_scene_images(project, project_dir, overwrite=overwrite)
+        self.refresh_assets(project, project_dir)
+        return failures
     def render(self, project: MorrowglassProject, project_dir: str | Path, **kwargs) -> Path:
         missing = self.refresh_assets(project, project_dir)
         if missing:
