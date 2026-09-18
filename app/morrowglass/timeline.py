@@ -42,6 +42,21 @@ def assign_by_duration(scenes: list[Scene], audio_duration: float) -> list[Scene
     if scenes: scenes[-1].end = audio_duration
     return scenes
 
+def _make_contiguous(scenes: list[Scene], audio_duration: float | None) -> None:
+    if not scenes:
+        return
+    scenes[0].start = 0.0
+    for i in range(len(scenes) - 1):
+        left = scenes[i]
+        right = scenes[i + 1]
+        left_end = float(left.end or 0)
+        right_start = float(right.start or left_end)
+        boundary = max(float(left.start or 0), (left_end + right_start) / 2)
+        left.end = boundary
+        right.start = boundary
+    if audio_duration is not None and audio_duration > 0:
+        scenes[-1].end = float(audio_duration)
+
 def assign_from_srt(scenes: list[Scene], cues: list[Cue], audio_duration: float | None = None) -> list[Scene]:
     if not scenes: return scenes
     if not cues:
@@ -62,5 +77,5 @@ def assign_from_srt(scenes: list[Scene], cues: list[Cue], audio_duration: float 
         scene.start = cues[start_i].start
         scene.end = cues[cue_i - 1].end
     if cue_i < len(cues): scenes[-1].end = cues[-1].end
-    if scenes[0].start is None: scenes[0].start = 0.0
+    _make_contiguous(scenes, audio_duration)
     return scenes
