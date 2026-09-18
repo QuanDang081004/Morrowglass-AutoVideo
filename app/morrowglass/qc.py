@@ -7,6 +7,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 from PIL import Image
@@ -52,9 +53,47 @@ def _vision_settings() -> tuple[str, str, str]:
     return base_url, model, api_key
 
 
+def _external_ai_enabled() -> bool:
+    return os.getenv(
+        "MORROWGLASS_ALLOW_PAID_PROVIDERS",
+        "",
+    ).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _is_local_endpoint(
+    base_url: str,
+) -> bool:
+    try:
+        host = (
+            urlparse(base_url).hostname
+            or ""
+        ).lower()
+    except Exception:
+        return False
+    return host in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }
+
+
 def semantic_qc_available() -> bool:
     base_url, model, _ = _vision_settings()
-    return bool(base_url and model)
+    return bool(
+        base_url
+        and model
+        and (
+            _is_local_endpoint(
+                base_url
+            )
+            or _external_ai_enabled()
+        )
+    )
 
 
 def _extract_json(text: str) -> dict:
@@ -84,7 +123,23 @@ def semantic_scene_qc(
         return QCResult(
             True,
             score=None,
-            notes=["semantic QC skipped: no vision model configured"],
+            notes=[
+                "semantic QC skipped: no vision model configured"
+            ],
+        )
+    if (
+        not _is_local_endpoint(
+            base_url
+        )
+        and not _external_ai_enabled()
+    ):
+        return QCResult(
+            True,
+            score=None,
+            notes=[
+                "semantic QC skipped: remote vision endpoints "
+                "are blocked in FREE-ONLY mode"
+            ],
         )
 
     image_path = Path(image_path)
