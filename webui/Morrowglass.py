@@ -169,6 +169,7 @@ def _ensure_audio_timeline(
     *,
     voice_name: str,
     voice_rate: float,
+    kokoro_python: str,
 ) -> MorrowglassProject:
     audio_file = Path(
         str(
@@ -204,6 +205,7 @@ def _ensure_audio_timeline(
         project_dir,
         voice_name=voice_name or None,
         voice_rate=voice_rate,
+        kokoro_python=kokoro_python or None,
     )
 
 
@@ -261,6 +263,7 @@ def _save_ui_settings(
     *,
     asset_mode: str,
     voice_name: str,
+    kokoro_python: str,
     image_provider: str,
     comfyui_url: str,
     comfyui_image_workflow: str,
@@ -271,6 +274,9 @@ def _save_ui_settings(
         asset_mode
     )
     project.voice_name = voice_name
+    project.metadata[
+        "kokoro_python"
+    ] = kokoro_python
     project.metadata[
         "preferred_image_provider"
     ] = image_provider
@@ -369,6 +375,17 @@ if not default_video_workflow_path:
             detected
         )
 
+default_kokoro_python = str(
+    stored.get(
+        "kokoro_python",
+        "",
+    )
+    or os.getenv(
+        "MORROWGLASS_KOKORO_PYTHON",
+        "",
+    )
+)
+
 default_comfyui_url = str(
     stored.get(
         "preferred_comfyui_url",
@@ -433,7 +450,19 @@ with st.sidebar:
         value=(
             project.voice_name
             if project
-            else "kokoro:am_michael"
+            else "kokoro-local:am_michael"
+        ),
+    )
+    kokoro_python = st.text_input(
+        "Local Kokoro Python",
+        value=default_kokoro_python,
+        placeholder=(
+            r"C:\MorrowglassTTS\venv\Scripts\python.exe"
+        ),
+        help=(
+            "Only needed for voices beginning with "
+            "kokoro-local:. Point this to the python.exe "
+            "inside your existing Kokoro environment."
         ),
     )
     voice_rate = st.slider(
@@ -631,6 +660,7 @@ try:
                 manifest,
                 asset_mode=asset_mode_value,
                 voice_name=voice_name,
+                kokoro_python=kokoro_python,
                 image_provider=image_provider,
                 comfyui_url=comfyui_url,
                 comfyui_image_workflow=(
@@ -658,6 +688,7 @@ try:
                 manifest,
                 asset_mode=asset_mode_value,
                 voice_name=voice_name,
+                kokoro_python=kokoro_python,
                 image_provider=image_provider,
                 comfyui_url=comfyui_url,
                 comfyui_image_workflow=(
@@ -682,6 +713,10 @@ try:
                         or None
                     ),
                     voice_rate=voice_rate,
+                    kokoro_python=(
+                        kokoro_python
+                        or None
+                    ),
                 )
             st.success(
                 "Narration and scene "
@@ -700,6 +735,7 @@ try:
                 manifest,
                 asset_mode=asset_mode_value,
                 voice_name=voice_name,
+                kokoro_python=kokoro_python,
                 image_provider=image_provider,
                 comfyui_url=comfyui_url,
                 comfyui_image_workflow=(
@@ -781,6 +817,7 @@ try:
                 manifest,
                 asset_mode=asset_mode_value,
                 voice_name=voice_name,
+                kokoro_python=kokoro_python,
                 image_provider=image_provider,
                 comfyui_url=comfyui_url,
                 comfyui_image_workflow=(
@@ -834,6 +871,7 @@ try:
                             asset_mode_value
                         ),
                         voice_name=voice_name,
+                        kokoro_python=kokoro_python,
                         image_provider=(
                             image_provider
                         ),
@@ -890,6 +928,7 @@ try:
                             asset_mode_value
                         ),
                         voice_name=voice_name,
+                        kokoro_python=kokoro_python,
                         image_provider=(
                             image_provider
                         ),
@@ -916,6 +955,7 @@ try:
                     project_dir,
                     voice_name=voice_name,
                     voice_rate=voice_rate,
+                    kokoro_python=kokoro_python,
                 )
 
                 missing = _pipeline(
