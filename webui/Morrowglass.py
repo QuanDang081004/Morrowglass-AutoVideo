@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
 
 from app.morrowglass.audio import (  # noqa: E402
     VIETNAMESE_KOKORO_VOICES,
+    narration_fingerprint,
     synthesize_narration,
 )
 from app.morrowglass.assets import (  # noqa: E402
@@ -199,9 +200,32 @@ def _ensure_audio_timeline(
             or ""
         )
     )
+    expected_fingerprint = (
+        narration_fingerprint(
+            project,
+            voice_name=voice_name or None,
+            voice_rate=voice_rate,
+            voice_volume=voice_volume,
+            kokoro_en_python=(
+                kokoro_en_python
+                or None
+            ),
+            kokoro_vi_python=(
+                kokoro_vi_python
+                or None
+            ),
+            kokoro_vi_device=(
+                kokoro_vi_device
+            ),
+        )
+    )
     if (
         audio_file.is_file()
         and timing_file.is_file()
+        and project.metadata.get(
+            "tts_fingerprint"
+        )
+        == expected_fingerprint
         and all(
             scene.start is not None
             and scene.end is not None
