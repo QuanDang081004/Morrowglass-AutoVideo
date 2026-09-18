@@ -139,21 +139,6 @@ def _postprocess_local_audio(
 ) -> None:
     filters: list[str] = []
 
-    if (
-        engine == "vietnamese"
-        and abs(float(speed) - 1.0)
-        > 0.001
-    ):
-        speed_value = float(speed)
-        if not 0.5 <= speed_value <= 2.0:
-            raise ValueError(
-                "Vietnamese Kokoro speed must be "
-                "between 0.5 and 2.0"
-            )
-        filters.append(
-            f"atempo={speed_value:.4f}"
-        )
-
     if abs(
         float(volume) - 1.0
     ) > 0.001:
@@ -283,11 +268,7 @@ def _synthesize_local_kokoro(
             selected_voice
         ),
         "--speed",
-        str(
-            float(voice_rate)
-            if engine == "english"
-            else 1.0
-        ),
+        str(float(voice_rate)),
         "--device",
         (
             kokoro_vi_device
