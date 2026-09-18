@@ -76,6 +76,8 @@ _SEARCH_STOPWORDS = {
     "his", "in", "into", "is", "it", "its", "of", "on", "or",
     "she", "that", "the", "their", "them", "they", "this", "to",
     "was", "were", "with", "would", "according", "story", "said",
+    "và", "là", "của", "có", "đã", "được", "trong", "một", "những",
+    "người", "này", "đó", "với", "cho", "từ", "khi", "theo", "rằng",
 }
 
 
@@ -84,8 +86,9 @@ def _fallback_search_query(
     bible: VisualBible,
 ) -> str:
     tokens = re.findall(
-        r"[A-Za-z0-9][A-Za-z0-9'-]*",
+        r"[^\W_][\w'-]*",
         narration or "",
+        flags=re.UNICODE,
     )
     content: list[str] = []
     for token in tokens:
@@ -255,7 +258,7 @@ STYLE BIBLE:
 Return ONLY a JSON array. Each object must contain:
 - narration: exact contiguous excerpt from the supplied script
 - visual_description: concrete visible action/place/people matching that narration
-- image_prompt: detailed photorealistic 16:9 generation prompt consistent with the style bible
+- image_prompt: detailed photorealistic generation prompt consistent with the style bible and its requested composition/aspect
 - search_query: short concrete 3-8 word query for archive/stock search; visible nouns/actions only
 - motion_prompt: short image-to-video motion prompt, no new story facts
 - asset_type: one of image, image_to_video, video, stock, manual
