@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import sys
 
@@ -33,11 +34,31 @@ def _mpt_llm_call(prompt: str) -> str:
     return llm._generate_response(prompt)
 
 
+def _external_ai_enabled() -> bool:
+    return os.getenv(
+        "MORROWGLASS_ALLOW_PAID_PROVIDERS",
+        "",
+    ).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _pipeline(
     use_llm: bool = True,
 ) -> MorrowglassPipeline:
+    allow_external = (
+        use_llm
+        and _external_ai_enabled()
+    )
     return MorrowglassPipeline(
-        llm_call=_mpt_llm_call if use_llm else None
+        llm_call=(
+            _mpt_llm_call
+            if allow_external
+            else None
+        )
     )
 
 
@@ -783,7 +804,6 @@ def _add_image_options(parser) -> None:
         choices=[
             "auto",
             "wikimedia",
-            "mpt_openai",
             "comfyui",
         ],
         default="auto",
