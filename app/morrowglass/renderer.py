@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import subprocess
 from pathlib import Path
+
+from loguru import logger
 
 from app.models.schema import VideoAspect, VideoFitMode, VideoParams
 from app.services import video
@@ -14,6 +18,7 @@ from .models import MorrowglassProject
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 IMAGE_MOTION_MODES = {"none", "slow_zoom"}
+_RENDER_CACHE_VERSION = 1
 
 
 def _fit_filter(
@@ -150,6 +155,79 @@ def _build_scene_ffmpeg_command(
     return command
 
 
+
+def _scene_render_fingerprint(
+    *,
+    scene_id: str,
+    asset_path: str | Path,
+    duration: float,
+    width: int,
+    height: int,
+    fit_mode: str,
+    fps: int,
+    image_motion: str,
+    motion_variant: int,
+) -> str:
+    asset = Path(asset_path)
+    stat = asset.stat()
+    payload = {
+        "cache_version": _RENDER_CACHE_VERSION,
+        "scene_id": scene_id,
+        "asset_path": str(asset.resolve()),
+        "asset_size": stat.st_size,
+        "asset_mtime_ns": stat.st_mtime_ns,
+        "duration": round(float(duration), 6),
+        "width": int(width),
+        "height": int(height),
+        "fit_mode": str(fit_mode),
+        "fps": int(fps),
+        "image_motion": str(image_motion),
+        "motion_variant": int(motion_variant),
+    }
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _load_render_cache(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    entries = raw.get("scenes")
+    if not isinstance(entries, dict):
+        return {}
+    return {
+        str(key): str(value)
+        for key, value in entries.items()
+        if isinstance(value, str)
+    }
+
+
+def _save_render_cache(
+    path: Path,
+    entries: dict[str, str],
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": _RENDER_CACHE_VERSION,
+        "scenes": entries,
+    }
+    temp_path = path.with_suffix(".tmp")
+    temp_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    temp_path.replace(path)
+
+
 def _run_ffmpeg(command: list[str], *, label: str) -> None:
     result = subprocess.run(
         command,
@@ -181,6 +259,11 @@ def render_scene_timeline(
 
     width, height = project.resolution
     clip_files: list[str] = []
+    cache_manifest = cache_dir / "render-cache.json"
+    previous_cache = _load_render_cache(cache_manifest)
+    next_cache: dict[str, str] = {}
+    rendered_count = 0
+    reused_count = 0
 
     for scene_index, scene in enumerate(project.scenes):
         if not scene.asset_path:
@@ -204,9 +287,9 @@ def render_scene_timeline(
             )
 
         scene_clip = cache_dir / f"{scene.scene_id}.mp4"
-        command = _build_scene_ffmpeg_command(
+        fingerprint = _scene_render_fingerprint(
+            scene_id=scene.scene_id,
             asset_path=asset,
-            output_path=scene_clip,
             duration=duration,
             width=width,
             height=height,
@@ -215,11 +298,42 @@ def render_scene_timeline(
             image_motion=image_motion,
             motion_variant=scene_index,
         )
-        _run_ffmpeg(
-            command,
-            label=f"render {scene.scene_id}",
+        can_reuse = (
+            previous_cache.get(scene.scene_id) == fingerprint
+            and scene_clip.is_file()
+            and scene_clip.stat().st_size > 0
         )
+        if can_reuse:
+            reused_count += 1
+            logger.info(
+                f"reuse cached scene clip: {scene.scene_id}"
+            )
+        else:
+            command = _build_scene_ffmpeg_command(
+                asset_path=asset,
+                output_path=scene_clip,
+                duration=duration,
+                width=width,
+                height=height,
+                fit_mode=fit_mode,
+                fps=fps,
+                image_motion=image_motion,
+                motion_variant=scene_index,
+            )
+            _run_ffmpeg(
+                command,
+                label=f"render {scene.scene_id}",
+            )
+            rendered_count += 1
+
+        next_cache[scene.scene_id] = fingerprint
         clip_files.append(str(scene_clip))
+
+    _save_render_cache(cache_manifest, next_cache)
+    logger.info(
+        "scene render cache: "
+        f"rendered={rendered_count}, reused={reused_count}"
+    )
 
     audio_duration = float(
         project.metadata.get("audio_duration") or 0
@@ -245,6 +359,8 @@ def render_scene_timeline(
         combined.resolve()
     )
     project.metadata["image_motion"] = image_motion
+    project.metadata["scene_clips_rendered"] = rendered_count
+    project.metadata["scene_clips_reused"] = reused_count
     return combined
 
 
