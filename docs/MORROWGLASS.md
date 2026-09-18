@@ -6,14 +6,18 @@ Scene-aware automation layer for MoneyPrinterTurbo. Development happens on **mor
 
 ```text
 final script
+  -> auto Visual Bible
   -> Scene Director
-  -> Visual Bible + scene prompts
+  -> per-scene image + motion prompts
   -> Kokoro / MPT TTS
   -> faster-whisper word timing
   -> exact scene timeline
-  -> AUTO or HYBRID assets
-  -> optional image semantic QC + retry
+  -> AUTO / HYBRID / MANUAL assets
+     -> ComfyUI image workflow OR MPT image backend
+     -> technical + optional semantic QC/retry
+     -> optional ComfyUI image-to-video for motion scenes
   -> exact-duration scene renderer
+  -> incremental per-scene render cache
   -> readable subtitles + optional BGM
   -> output/morrowglass_final.mp4
 ```
@@ -45,32 +49,65 @@ final script
 
 ### Phase 4 — AUTO images and QC
 - MPT OpenAI-compatible text-to-image backend is called with the **scene prompt**, not a generic keyword
-- generated files are renamed to `scene_001.png`, `scene_002.png`, ...
+- generated files use scene names such as `scene_001.png`
 - technical image QC checks decodeability and useful resolution
 - optional OpenAI-compatible vision QC checks scene match, anachronisms and visible generation defects
 - failed candidates are moved to `cache/rejected_images/`
 - AUTO mode retries candidates; HYBRID mode remains available
 
+### Phase 5 — documentary motion, continuity and incremental rebuild
+- Visual Bible can be auto-enriched from the final script
+- user-supplied period/location/character facts always override inferred values
+- still images can use subtle deterministic Ken Burns motion
+- scene clip fingerprints allow unchanged scenes to reuse render cache
+- replacing one visual does not require rebuilding every scene clip
+
+### Phase 6 — direct ComfyUI image/video workflows
+- generic ComfyUI API-format workflow adapter
+- no hard-coded model or node IDs
+- supported placeholders:
+  - `{{PROMPT}}`
+  - `{{NEGATIVE_PROMPT}}`
+  - `{{MOTION_PROMPT}}`
+  - `{{SEED}}`
+  - `{{WIDTH}}`
+  - `{{HEIGHT}}`
+  - `{{INPUT_IMAGE}}`
+  - `{{OUTPUT_PREFIX}}`
+- AUTO image provider can select ComfyUI or fall back to MPT's existing image backend
+- Scene Director marks motion-worthy scenes; only those scenes are sent to the ComfyUI video workflow
+- input images are uploaded to ComfyUI automatically
+- generated video files replace the still image for that scene; failed video scenes safely fall back to the still image
+- project-local defaults:
+  - `workflows/image.json`
+  - `workflows/video.json`
+
+See `docs/COMFYUI.md` for workflow export and placeholder details.
+
 ## One-click Windows WebUI
 
-After the repository dependencies are installed, double-click:
+After dependencies are installed, double-click:
 
 ```text
 morrowglass_webui.bat
 ```
 
-The dedicated UI opens on a local address (normally port 8510). It provides:
+The dedicated UI provides:
 
 - script paste box
-- historical period/location
+- optional period/location; blank values can be inferred from script
 - AUTO / HYBRID / MANUAL mode
 - Kokoro voice and speed
-- scene planning
-- voice + Whisper timing
-- automatic missing-image generation
-- scene table
+- ComfyUI URL
+- automatic image provider selection
+- ComfyUI image workflow path
+- ComfyUI video workflow path
+- optional animation of motion scenes
+- image QC/retry
+- scene table with planned asset type
 - image/video preview
 - per-scene replacement upload
+- incremental rendering
 - final render
 - Full run button
 
@@ -82,10 +119,16 @@ Check the local environment:
 python morrowglass.py doctor
 ```
 
+Check a specific project's ComfyUI workflow discovery too:
+
+```bat
+python morrowglass.py doctor --project-dir D:\Morrowglass\Video02
+```
+
 HYBRID workflow:
 
 ```bat
-python morrowglass.py run script.txt --project-dir D:\Morrowglass\Video02 --period "13th-century Japan" --voice kokoro:am_michael
+python morrowglass.py run script.txt --project-dir D:\Morrowglass\Video02 --voice kokoro:am_michael
 ```
 
 First HYBRID run creates the scene plan, narration, timing and prompt pack, then stops if assets are missing.
@@ -106,21 +149,25 @@ AUTO workflow:
 python morrowglass.py run script.txt --project-dir D:\Morrowglass\Video02 --asset-mode auto --voice kokoro:am_michael
 ```
 
-AUTO images use MoneyPrinterTurbo's existing OpenAI-compatible image configuration:
+AUTO image provider priority when `--image-provider auto` is used:
 
-```toml
-openai_image_base_url = "http://127.0.0.1:7860/v1"
-openai_image_model = "your-image-model"
-openai_image_api_keys = []
-```
+1. project/global ComfyUI image workflow if present
+2. MoneyPrinterTurbo OpenAI-compatible image backend
+3. error with a clear HYBRID/manual fallback message
 
-The endpoint must implement the OpenAI-compatible `/images/generations` protocol. A local gateway can be used without an API key.
-
-Generate/retry images separately:
+Force ComfyUI:
 
 ```bat
-python morrowglass.py images --project-dir D:\Morrowglass\Video02 --image-attempts 3 --min-qc-score 75
+python morrowglass.py images --project-dir D:\Morrowglass\Video02 --image-provider comfyui --comfyui-url http://127.0.0.1:8188 --comfyui-image-workflow D:\Morrowglass\workflows\image.json
 ```
+
+Generate motion scenes separately:
+
+```bat
+python morrowglass.py videos --project-dir D:\Morrowglass\Video02 --comfyui-url http://127.0.0.1:8188 --comfyui-video-workflow D:\Morrowglass\workflows\video.json
+```
+
+If `asset-mode=auto` and the project contains `workflows/video.json`, the normal `run` command automatically attempts image-to-video for scenes marked as motion-worthy. Failed video generations keep their still image so final rendering can continue.
 
 Optional local BGM:
 
@@ -140,7 +187,7 @@ set MORROWGLASS_VISION_API_KEY=
 
 The endpoint must expose OpenAI-compatible `/chat/completions` and accept image URLs/data URIs.
 
-Without a vision model, generated images still receive technical QC and the user can review/replace them in the Morrowglass WebUI.
+Without a vision model, generated images still receive technical QC and can be reviewed/replaced in the Morrowglass WebUI.
 
 ## Git workflow
 
@@ -153,17 +200,16 @@ morrowglass-dev
 Draft PR:
 
 ```text
-#1 Morrowglass AutoVideo: scene-aware pipeline (Phases 1-4)
+#1 Morrowglass AutoVideo: scene-aware pipeline (Phases 1-6)
 ```
-
-The fork contains an upstream CI workflow, but GitHub Actions may need to be enabled once on a newly created fork before PR checks appear.
 
 ## Remaining work
 
-1. run full Windows end-to-end test with the actual Kokoro setup
-2. tune subtitle style / still-image motion against a real Morrowglass video
-3. optionally add a direct ComfyUI workflow adapter (without an OpenAI-compatible gateway)
-4. optionally add scene-specific AI video / image-to-video providers
-5. harden cache/resume behavior after real long-video testing
+1. run full Windows end-to-end test with the actual Morrowglass Kokoro setup
+2. install/test a real ComfyUI image workflow on the target GPU
+3. install/test an image-to-video workflow such as Wan and tune duration/resolution for the target GPU
+4. tune subtitle styling, BGM defaults and still-image motion against real channel output
+5. long-video stress test for cache/resume behavior
+6. only after those tests, merge the draft PR into `main`
 
 <!-- CI trigger marker: Actions enabled on fork -->
