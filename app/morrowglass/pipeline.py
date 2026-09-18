@@ -15,7 +15,12 @@ from .generators import (
     generate_missing_scene_images,
     generate_motion_scene_videos,
 )
-from .models import AssetMode, MorrowglassProject, VisualBible
+from .models import (
+    AssetMode,
+    MorrowglassProject,
+    VisualBible,
+    aspect_composition,
+)
 from .renderer import render_final_video
 from .timeline import TIMELINE_VERSION, assign_from_srt, parse_srt
 
@@ -34,7 +39,8 @@ class MorrowglassPipeline:
         *,
         title: str = "Morrowglass Video",
         bible: VisualBible | None = None,
-        asset_mode: AssetMode = AssetMode.HYBRID,
+        asset_mode: AssetMode = AssetMode.AUTO,
+        aspect: str = "16:9",
         use_llm: bool = True,
     ) -> MorrowglassProject:
         project_dir = Path(project_dir)
@@ -51,6 +57,15 @@ class MorrowglassPipeline:
             (project_dir / name).mkdir(exist_ok=True)
 
         bible = bible or VisualBible()
+        composition = aspect_composition(
+            aspect
+        )
+        if composition not in bible.style:
+            bible.style = (
+                bible.style.rstrip(" ,")
+                + ", "
+                + composition
+            )
         if use_llm:
             bible = enrich_visual_bible(
                 script,
@@ -64,6 +79,7 @@ class MorrowglassPipeline:
             use_llm=use_llm,
         )
         project.asset_mode = asset_mode
+        project.set_aspect(aspect)
         write_prompt_pack(project, project_dir)
         resolve_assets(project, project_dir)
         project.save(project_dir / "project.json")
