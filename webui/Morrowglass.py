@@ -265,6 +265,15 @@ with st.sidebar:
         max_value=80,
         value=48,
     )
+    image_motion = st.selectbox(
+        "Still-image motion",
+        options=["slow_zoom", "none"],
+        index=0,
+        help=(
+            "slow_zoom adds subtle documentary-style Ken Burns motion "
+            "without changing scene timing."
+        ),
+    )
 
 script_default = project.script if project else ""
 script = st.text_area(
@@ -371,6 +380,7 @@ try:
                     bgm_file=bgm_path or None,
                     bgm_volume=bgm_volume,
                     font_size=font_size,
+                    image_motion=image_motion,
                 )
             st.success(f"Final video: {final}")
             st.video(str(final))
