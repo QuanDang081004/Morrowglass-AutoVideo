@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from pathlib import Path
 import re
 
@@ -78,28 +79,231 @@ def assign_by_duration(
     return scenes
 
 
-def _make_contiguous(
-    scenes: list[Scene],
-    audio_duration: float | None,
-) -> None:
-    if not scenes:
-        return
+def _flatten_cue_tokens(
+    cues: list[Cue],
+) -> tuple[list[str], list[int]]:
+    words: list[str] = []
+    word_to_cue: list[int] = []
+    for cue_index, cue in enumerate(cues):
+        cue_words = _tokens(cue.text)
+        for word in cue_words:
+            words.append(word)
+            word_to_cue.append(cue_index)
+    return words, word_to_cue
 
-    scenes[0].start = 0.0
-    for index in range(len(scenes) - 1):
-        left = scenes[index]
-        right = scenes[index + 1]
-        left_end = float(left.end or 0)
-        right_start = float(right.start or left_end)
-        boundary = max(
-            float(left.start or 0),
-            (left_end + right_start) / 2,
+
+def _alignment_map(
+    script_tokens: list[str],
+    whisper_tokens: list[str],
+) -> dict[int, int]:
+    matcher = SequenceMatcher(
+        None,
+        script_tokens,
+        whisper_tokens,
+        autojunk=False,
+    )
+    mapping: dict[int, int] = {}
+    for block in matcher.get_matching_blocks():
+        for offset in range(block.size):
+            mapping[
+                block.a + offset
+            ] = block.b + offset
+    return mapping
+
+
+def _estimate_word_index(
+    script_index: int,
+    *,
+    script_length: int,
+    whisper_length: int,
+    mapping: dict[int, int],
+) -> int:
+    if whisper_length <= 0:
+        raise ValueError("whisper token list is empty")
+
+    exact = mapping.get(script_index)
+    if exact is not None:
+        return exact
+
+    previous = [
+        (source, target)
+        for source, target in mapping.items()
+        if source < script_index
+    ]
+    following = [
+        (source, target)
+        for source, target in mapping.items()
+        if source > script_index
+    ]
+
+    prev_anchor = max(
+        previous,
+        default=None,
+        key=lambda item: item[0],
+    )
+    next_anchor = min(
+        following,
+        default=None,
+        key=lambda item: item[0],
+    )
+
+    if prev_anchor and next_anchor:
+        src_span = (
+            next_anchor[0] - prev_anchor[0]
         )
-        left.end = boundary
-        right.start = boundary
+        dst_span = (
+            next_anchor[1] - prev_anchor[1]
+        )
+        ratio = (
+            (script_index - prev_anchor[0])
+            / src_span
+        )
+        estimate = round(
+            prev_anchor[1]
+            + ratio * dst_span
+        )
+    elif prev_anchor:
+        estimate = (
+            prev_anchor[1]
+            + script_index
+            - prev_anchor[0]
+        )
+    elif next_anchor:
+        estimate = (
+            next_anchor[1]
+            - (
+                next_anchor[0]
+                - script_index
+            )
+        )
+    else:
+        ratio = (
+            script_index
+            / max(1, script_length - 1)
+        )
+        estimate = round(
+            ratio
+            * max(0, whisper_length - 1)
+        )
 
-    if audio_duration is not None and audio_duration > 0:
-        scenes[-1].end = float(audio_duration)
+    return max(
+        0,
+        min(
+            whisper_length - 1,
+            int(estimate),
+        ),
+    )
+
+
+def _aligned_scene_boundaries(
+    scenes: list[Scene],
+    cues: list[Cue],
+) -> list[float] | None:
+    scene_tokens = [
+        _tokens(scene.narration)
+        for scene in scenes
+    ]
+    script_tokens = [
+        word
+        for words in scene_tokens
+        for word in words
+    ]
+    whisper_tokens, word_to_cue = (
+        _flatten_cue_tokens(cues)
+    )
+
+    if (
+        not script_tokens
+        or not whisper_tokens
+        or not word_to_cue
+    ):
+        return None
+
+    mapping = _alignment_map(
+        script_tokens,
+        whisper_tokens,
+    )
+
+    # Require enough exact anchors to trust text alignment. Whisper is
+    # normally very close to the supplied narration, but if it diverges
+    # badly we fall back to duration weighting rather than invent timings.
+    match_ratio = (
+        len(mapping)
+        / max(1, len(script_tokens))
+    )
+    if match_ratio < 0.55:
+        return None
+
+    boundaries: list[float] = []
+    cumulative = 0
+
+    for scene_index in range(
+        len(scenes) - 1
+    ):
+        cumulative += len(
+            scene_tokens[scene_index]
+        )
+        last_script_index = max(
+            0,
+            cumulative - 1,
+        )
+        next_script_index = min(
+            len(script_tokens) - 1,
+            cumulative,
+        )
+
+        last_word_index = (
+            _estimate_word_index(
+                last_script_index,
+                script_length=len(
+                    script_tokens
+                ),
+                whisper_length=len(
+                    whisper_tokens
+                ),
+                mapping=mapping,
+            )
+        )
+        next_word_index = (
+            _estimate_word_index(
+                next_script_index,
+                script_length=len(
+                    script_tokens
+                ),
+                whisper_length=len(
+                    whisper_tokens
+                ),
+                mapping=mapping,
+            )
+        )
+
+        if next_word_index <= last_word_index:
+            next_word_index = min(
+                len(whisper_tokens) - 1,
+                last_word_index + 1,
+            )
+
+        last_cue = cues[
+            word_to_cue[last_word_index]
+        ]
+        next_cue = cues[
+            word_to_cue[next_word_index]
+        ]
+
+        # Keep the current visual through its final spoken word. If there
+        # is a pause before the next scene starts, cut halfway through the
+        # pause so neither visual intrudes on the other's narration.
+        boundary = max(
+            last_cue.end,
+            (
+                last_cue.end
+                + next_cue.start
+            )
+            / 2,
+        )
+        boundaries.append(boundary)
+
+    return boundaries
 
 
 def assign_from_srt(
@@ -110,55 +314,51 @@ def assign_from_srt(
     if not scenes:
         return scenes
 
-    if not cues or len(cues) < len(scenes):
+    if not cues:
         if audio_duration is None:
-            if cues:
-                audio_duration = cues[-1].end
-            else:
-                raise ValueError(
-                    "audio_duration is required when subtitle cues are unavailable"
-                )
-        return assign_by_duration(scenes, float(audio_duration))
-
-    cue_counts = [
-        max(1, len(_tokens(cue.text)))
-        for cue in cues
-    ]
-    scene_counts = [
-        max(1, len(_tokens(scene.narration)))
-        for scene in scenes
-    ]
-    cue_i = 0
-
-    for scene_i, scene in enumerate(scenes):
-        if cue_i >= len(cues):
-            if audio_duration is None:
-                audio_duration = cues[-1].end
-            return assign_by_duration(
-                scenes,
-                float(audio_duration),
+            raise ValueError(
+                "audio_duration is required when subtitle cues are unavailable"
             )
-
-        start_i = cue_i
-        target = scene_counts[scene_i]
-        consumed = 0
-        remaining_scenes = len(scenes) - scene_i - 1
-        max_end_exclusive = max(
-            start_i + 1,
-            len(cues) - remaining_scenes,
+        return assign_by_duration(
+            scenes,
+            float(audio_duration),
         )
 
-        while cue_i < max_end_exclusive:
-            consumed += cue_counts[cue_i]
-            cue_i += 1
-            if consumed >= target * 0.86:
-                break
+    boundaries = _aligned_scene_boundaries(
+        scenes,
+        cues,
+    )
+    if boundaries is None:
+        if audio_duration is None:
+            audio_duration = cues[-1].end
+        return assign_by_duration(
+            scenes,
+            float(audio_duration),
+        )
 
-        scene.start = cues[start_i].start
-        scene.end = cues[cue_i - 1].end
+    cursor = 0.0
+    for scene_index, scene in enumerate(
+        scenes
+    ):
+        scene.start = cursor
+        if scene_index < len(boundaries):
+            scene.end = max(
+                cursor,
+                boundaries[scene_index],
+            )
+            cursor = scene.end
+        else:
+            final_end = (
+                float(audio_duration)
+                if (
+                    audio_duration is not None
+                    and audio_duration > 0
+                )
+                else cues[-1].end
+            )
+            scene.end = max(
+                cursor,
+                final_end,
+            )
 
-    if cue_i < len(cues):
-        scenes[-1].end = cues[-1].end
-
-    _make_contiguous(scenes, audio_duration)
     return scenes
