@@ -4,60 +4,119 @@ import argparse
 from pathlib import Path
 import sys
 
-from app.morrowglass.assets import missing_scene_ids, resolve_assets
-from app.morrowglass.doctor import required_checks_pass, run_doctor
-from app.morrowglass.generators import ImageGenerationUnavailable
-from app.morrowglass.models import AssetMode, MorrowglassProject, VisualBible
+from app.morrowglass.assets import (
+    missing_scene_ids,
+    resolve_assets,
+)
+from app.morrowglass.comfyui import default_video_workflow
+from app.morrowglass.doctor import (
+    required_checks_pass,
+    run_doctor,
+)
+from app.morrowglass.generators import (
+    ImageGenerationUnavailable,
+    VideoGenerationUnavailable,
+)
+from app.morrowglass.models import (
+    AssetMode,
+    MorrowglassProject,
+    VisualBible,
+)
 from app.morrowglass.pipeline import MorrowglassPipeline
 
 
 def _mpt_llm_call(prompt: str) -> str:
     from app.services import llm
+
     return llm._generate_response(prompt)
 
 
-def _pipeline(use_llm: bool = True) -> MorrowglassPipeline:
-    return MorrowglassPipeline(llm_call=_mpt_llm_call if use_llm else None)
+def _pipeline(
+    use_llm: bool = True,
+) -> MorrowglassPipeline:
+    return MorrowglassPipeline(
+        llm_call=_mpt_llm_call if use_llm else None
+    )
 
 
 def cmd_plan(args) -> int:
-    script = Path(args.script).read_text(encoding="utf-8-sig")
-    bible = VisualBible(period=args.period or "", location=args.location or "")
-    project = _pipeline(not args.no_llm).plan_project(
-        script, args.project_dir, title=args.title, bible=bible,
-        asset_mode=AssetMode(args.asset_mode), use_llm=not args.no_llm,
+    script = Path(args.script).read_text(
+        encoding="utf-8-sig"
+    )
+    bible = VisualBible(
+        period=args.period or "",
+        location=args.location or "",
+    )
+    project = _pipeline(
+        not args.no_llm
+    ).plan_project(
+        script,
+        args.project_dir,
+        title=args.title,
+        bible=bible,
+        asset_mode=AssetMode(args.asset_mode),
+        use_llm=not args.no_llm,
     )
     print(f"Created {len(project.scenes)} scenes")
-    print(f"Manifest: {Path(args.project_dir) / 'project.json'}")
-    print(f"Prompts:  {Path(args.project_dir) / 'prompts'}")
+    print(
+        f"Manifest: "
+        f"{Path(args.project_dir) / 'project.json'}"
+    )
+    print(
+        f"Prompts:  "
+        f"{Path(args.project_dir) / 'prompts'}"
+    )
     return 0
 
 
 def cmd_voice(args) -> int:
-    manifest = Path(args.project_dir) / "project.json"
-    project = MorrowglassProject.load(manifest)
-    _pipeline(False).build_audio_timeline(
-        project, args.project_dir, voice_name=args.voice or None, voice_rate=args.rate
+    manifest = (
+        Path(args.project_dir) / "project.json"
     )
     project = MorrowglassProject.load(manifest)
-    print(f"Narration: {project.metadata.get('audio_file')}")
-    print(f"Word timing: {project.metadata.get('word_subtitle_file')}")
+    _pipeline(False).build_audio_timeline(
+        project,
+        args.project_dir,
+        voice_name=args.voice or None,
+        voice_rate=args.rate,
+    )
+    project = MorrowglassProject.load(manifest)
     print(
-        f"Timed scenes: "
-        f"{sum(1 for s in project.scenes if s.start is not None and s.end is not None)}/"
-        f"{len(project.scenes)}"
+        f"Narration: "
+        f"{project.metadata.get('audio_file')}"
+    )
+    print(
+        f"Word timing: "
+        f"{project.metadata.get('word_subtitle_file')}"
+    )
+    timed = sum(
+        1
+        for scene in project.scenes
+        if scene.start is not None
+        and scene.end is not None
+    )
+    print(
+        f"Timed scenes: {timed}/{len(project.scenes)}"
     )
     return 0
 
 
 def cmd_status(args) -> int:
-    manifest = Path(args.project_dir) / "project.json"
+    manifest = (
+        Path(args.project_dir) / "project.json"
+    )
     project = MorrowglassProject.load(manifest)
-    resolve_assets(project, args.project_dir)
+    resolve_assets(
+        project,
+        args.project_dir,
+    )
     project.save(manifest)
     missing = missing_scene_ids(project)
     print(f"Scenes: {len(project.scenes)}")
-    print(f"Ready assets: {len(project.scenes) - len(missing)}")
+    print(
+        f"Ready assets: "
+        f"{len(project.scenes) - len(missing)}"
+    )
     print(f"Missing assets: {len(missing)}")
     if missing:
         print("Missing: " + ", ".join(missing))
@@ -65,34 +124,158 @@ def cmd_status(args) -> int:
     return 0
 
 
-def _generate_images_for_project(project, args) -> int:
+def _generate_images_for_project(
+    project: MorrowglassProject,
+    args,
+) -> int:
     try:
-        failures = _pipeline(False).auto_generate_images(
+        failures = _pipeline(
+            False
+        ).auto_generate_images(
             project,
             args.project_dir,
-            overwrite=getattr(args, "overwrite_images", False),
-            semantic_qc=not getattr(args, "no_semantic_qc", False),
-            min_qc_score=getattr(args, "min_qc_score", 75.0),
-            max_attempts=getattr(args, "image_attempts", 2),
+            overwrite=getattr(
+                args,
+                "overwrite_images",
+                False,
+            ),
+            semantic_qc=not getattr(
+                args,
+                "no_semantic_qc",
+                False,
+            ),
+            min_qc_score=getattr(
+                args,
+                "min_qc_score",
+                75.0,
+            ),
+            max_attempts=getattr(
+                args,
+                "image_attempts",
+                2,
+            ),
+            provider=getattr(
+                args,
+                "image_provider",
+                "auto",
+            ),
+            comfyui_url=getattr(
+                args,
+                "comfyui_url",
+                "",
+            )
+            or None,
+            comfyui_workflow=getattr(
+                args,
+                "comfyui_image_workflow",
+                "",
+            )
+            or None,
         )
     except ImageGenerationUnavailable as exc:
         print(str(exc))
         return 2
+
     if failures:
-        print("Image generation/QC failed for: " + ", ".join(failures))
+        print(
+            "Image generation/QC failed for: "
+            + ", ".join(failures)
+        )
         return 2
+
     print("All missing scene images were generated.")
     return 0
 
 
+def _generate_videos_for_project(
+    project: MorrowglassProject,
+    args,
+    *,
+    strict: bool,
+) -> int:
+    try:
+        failures = _pipeline(
+            False
+        ).auto_generate_videos(
+            project,
+            args.project_dir,
+            overwrite=getattr(
+                args,
+                "overwrite_videos",
+                False,
+            ),
+            comfyui_url=getattr(
+                args,
+                "comfyui_url",
+                "",
+            )
+            or None,
+            comfyui_workflow=getattr(
+                args,
+                "comfyui_video_workflow",
+                "",
+            )
+            or None,
+            timeout=getattr(
+                args,
+                "video_timeout",
+                2400.0,
+            ),
+        )
+    except VideoGenerationUnavailable as exc:
+        if strict:
+            print(str(exc))
+            return 2
+        print(
+            "Video generation skipped: "
+            f"{exc}"
+        )
+        return 0
+
+    if failures:
+        message = (
+            "Video generation failed for: "
+            + ", ".join(failures)
+        )
+        if strict:
+            print(message)
+            return 2
+        print(
+            message
+            + ". Still images will be used for those scenes."
+        )
+    else:
+        print("Motion scenes generated successfully.")
+    return 0
+
+
 def cmd_generate_images(args) -> int:
-    manifest = Path(args.project_dir) / "project.json"
+    manifest = (
+        Path(args.project_dir) / "project.json"
+    )
     project = MorrowglassProject.load(manifest)
-    return _generate_images_for_project(project, args)
+    return _generate_images_for_project(
+        project,
+        args,
+    )
+
+
+def cmd_generate_videos(args) -> int:
+    manifest = (
+        Path(args.project_dir) / "project.json"
+    )
+    project = MorrowglassProject.load(manifest)
+    return _generate_videos_for_project(
+        project,
+        args,
+        strict=True,
+    )
 
 
 def cmd_render(args) -> int:
-    manifest = Path(args.project_dir) / "project.json"
+    manifest = (
+        Path(args.project_dir) / "project.json"
+    )
     project = MorrowglassProject.load(manifest)
     try:
         final = _pipeline(False).render(
@@ -108,66 +291,182 @@ def cmd_render(args) -> int:
         )
     except FileNotFoundError as exc:
         print(str(exc))
-        print(f"Create the missing assets using prompts in {Path(args.project_dir) / 'prompts'}")
+        print(
+            "Create the missing assets using prompts in "
+            f"{Path(args.project_dir) / 'prompts'}"
+        )
         return 2
+
     print(f"Final video: {final}")
     return 0
+
+
+def _video_workflow_configured(args) -> bool:
+    explicit = str(
+        getattr(
+            args,
+            "comfyui_video_workflow",
+            "",
+        )
+        or ""
+    ).strip()
+    if explicit:
+        return Path(explicit).expanduser().is_file()
+
+    workflow = default_video_workflow(
+        args.project_dir
+    )
+    return bool(
+        workflow
+        and workflow.is_file()
+    )
 
 
 def cmd_run(args) -> int:
     project_dir = Path(args.project_dir)
     manifest = project_dir / "project.json"
+
     if not manifest.is_file():
-        script = Path(args.script).read_text(encoding="utf-8-sig")
-        bible = VisualBible(period=args.period or "", location=args.location or "")
-        project = _pipeline(not args.no_llm).plan_project(
+        script = Path(args.script).read_text(
+            encoding="utf-8-sig"
+        )
+        bible = VisualBible(
+            period=args.period or "",
+            location=args.location or "",
+        )
+        project = _pipeline(
+            not args.no_llm
+        ).plan_project(
             script,
             project_dir,
             title=args.title,
             bible=bible,
-            asset_mode=AssetMode(args.asset_mode),
+            asset_mode=AssetMode(
+                args.asset_mode
+            ),
             use_llm=not args.no_llm,
         )
     else:
-        project = MorrowglassProject.load(manifest)
-        project.asset_mode = AssetMode(args.asset_mode)
+        project = MorrowglassProject.load(
+            manifest
+        )
+        project.asset_mode = AssetMode(
+            args.asset_mode
+        )
         if args.voice:
             project.voice_name = args.voice
         project.save(manifest)
 
-    audio_file = Path(str(project.metadata.get("audio_file") or ""))
+    audio_file = Path(
+        str(
+            project.metadata.get(
+                "audio_file"
+            )
+            or ""
+        )
+    )
     word_timing_file = Path(
-        str(project.metadata.get("word_subtitle_file") or "")
+        str(
+            project.metadata.get(
+                "word_subtitle_file"
+            )
+            or ""
+        )
     )
-    audio_ready = audio_file.is_file() and word_timing_file.is_file()
-    timing_ready = bool(project.scenes) and all(
-        scene.start is not None and scene.end is not None
-        for scene in project.scenes
+    audio_ready = (
+        audio_file.is_file()
+        and word_timing_file.is_file()
     )
-    if not (audio_ready and timing_ready):
+    timing_ready = (
+        bool(project.scenes)
+        and all(
+            scene.start is not None
+            and scene.end is not None
+            for scene in project.scenes
+        )
+    )
+    if not (
+        audio_ready
+        and timing_ready
+    ):
         _pipeline(False).build_audio_timeline(
             project,
             project_dir,
             voice_name=args.voice or None,
             voice_rate=args.rate,
         )
-        project = MorrowglassProject.load(manifest)
+        project = MorrowglassProject.load(
+            manifest
+        )
 
-    missing = _pipeline(False).refresh_assets(project, project_dir)
-    should_auto_generate = (
-        project.asset_mode == AssetMode.AUTO or bool(args.auto_images)
+    missing = _pipeline(
+        False
+    ).refresh_assets(
+        project,
+        project_dir,
     )
-    if missing and should_auto_generate:
-        result = _generate_images_for_project(project, args)
+    should_auto_images = (
+        project.asset_mode == AssetMode.AUTO
+        or bool(args.auto_images)
+    )
+    if (
+        missing
+        and should_auto_images
+    ):
+        result = _generate_images_for_project(
+            project,
+            args,
+        )
         if result != 0:
             return result
-        project = MorrowglassProject.load(manifest)
-        missing = _pipeline(False).refresh_assets(project, project_dir)
+        project = MorrowglassProject.load(
+            manifest
+        )
+        missing = _pipeline(
+            False
+        ).refresh_assets(
+            project,
+            project_dir,
+        )
+
+    should_auto_videos = (
+        bool(args.auto_videos)
+        or (
+            project.asset_mode == AssetMode.AUTO
+            and _video_workflow_configured(
+                args
+            )
+        )
+    )
+    if should_auto_videos:
+        _generate_videos_for_project(
+            project,
+            args,
+            strict=False,
+        )
+        project = MorrowglassProject.load(
+            manifest
+        )
+        missing = _pipeline(
+            False
+        ).refresh_assets(
+            project,
+            project_dir,
+        )
 
     if missing:
-        print("HYBRID checkpoint: assets are required before render.")
-        print("Missing: " + ", ".join(missing))
-        print(f"Prompts: {project_dir / 'prompts'}")
+        print(
+            "HYBRID checkpoint: "
+            "assets are required before render."
+        )
+        print(
+            "Missing: "
+            + ", ".join(missing)
+        )
+        print(
+            f"Prompts: "
+            f"{project_dir / 'prompts'}"
+        )
         return 2
 
     final = _pipeline(False).render(
@@ -186,90 +485,344 @@ def cmd_run(args) -> int:
 
 
 def cmd_doctor(args) -> int:
-    checks = run_doctor()
+    checks = run_doctor(
+        getattr(
+            args,
+            "project_dir",
+            None,
+        )
+    )
     print("")
-    print("Morrowglass environment check")
+    print(
+        "Morrowglass environment check"
+    )
     print("-" * 72)
     for check in checks:
-        marker = "OK" if check.ok else ("OPTIONAL" if not check.required else "FAIL")
-        print(f"[{marker:8}] {check.name:12} {check.detail}")
+        marker = (
+            "OK"
+            if check.ok
+            else (
+                "OPTIONAL"
+                if not check.required
+                else "FAIL"
+            )
+        )
+        print(
+            f"[{marker:8}] "
+            f"{check.name:12} "
+            f"{check.detail}"
+        )
     print("-" * 72)
     if required_checks_pass(checks):
-        print("Required components are ready.")
+        print(
+            "Required components are ready."
+        )
         return 0
-    print("One or more required components need attention.")
+    print(
+        "One or more required components "
+        "need attention."
+    )
     return 2
 
 
-def _add_render_options(parser):
-    parser.add_argument("--bgm", default="")
-    parser.add_argument("--bgm-volume", type=float, default=0.12)
-    parser.add_argument("--font", default="STHeitiMedium.ttc")
-    parser.add_argument("--font-size", type=int, default=48)
-    parser.add_argument("--subtitle-position", default="bottom")
-    parser.add_argument("--fit-mode", choices=["cover", "contain"], default="cover")
-    parser.add_argument("--image-motion", choices=["slow_zoom", "none"], default="slow_zoom")
+def _add_render_options(parser) -> None:
+    parser.add_argument(
+        "--bgm",
+        default="",
+    )
+    parser.add_argument(
+        "--bgm-volume",
+        type=float,
+        default=0.12,
+    )
+    parser.add_argument(
+        "--font",
+        default="STHeitiMedium.ttc",
+    )
+    parser.add_argument(
+        "--font-size",
+        type=int,
+        default=48,
+    )
+    parser.add_argument(
+        "--subtitle-position",
+        default="bottom",
+    )
+    parser.add_argument(
+        "--fit-mode",
+        choices=["cover", "contain"],
+        default="cover",
+    )
+    parser.add_argument(
+        "--image-motion",
+        choices=["slow_zoom", "none"],
+        default="slow_zoom",
+    )
 
 
-def _add_image_options(parser):
-    parser.add_argument("--auto-images", action="store_true")
-    parser.add_argument("--overwrite-images", action="store_true")
-    parser.add_argument("--image-attempts", type=int, default=2)
-    parser.add_argument("--min-qc-score", type=float, default=75.0)
-    parser.add_argument("--no-semantic-qc", action="store_true")
+def _add_comfyui_options(parser) -> None:
+    parser.add_argument(
+        "--comfyui-url",
+        default="",
+    )
+    parser.add_argument(
+        "--comfyui-image-workflow",
+        default="",
+    )
+    parser.add_argument(
+        "--comfyui-video-workflow",
+        default="",
+    )
+
+
+def _add_image_options(parser) -> None:
+    parser.add_argument(
+        "--auto-images",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--overwrite-images",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--image-provider",
+        choices=[
+            "auto",
+            "mpt_openai",
+            "comfyui",
+        ],
+        default="auto",
+    )
+    parser.add_argument(
+        "--image-attempts",
+        type=int,
+        default=2,
+    )
+    parser.add_argument(
+        "--min-qc-score",
+        type=float,
+        default=75.0,
+    )
+    parser.add_argument(
+        "--no-semantic-qc",
+        action="store_true",
+    )
+
+
+def _add_video_options(parser) -> None:
+    parser.add_argument(
+        "--auto-videos",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--overwrite-videos",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--video-timeout",
+        type=float,
+        default=2400.0,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Morrowglass scene-aware automation layer")
-    sub = p.add_subparsers(dest="command", required=True)
+    parser = argparse.ArgumentParser(
+        description=(
+            "Morrowglass scene-aware "
+            "automation layer"
+        )
+    )
+    sub = parser.add_subparsers(
+        dest="command",
+        required=True,
+    )
 
-    plan = sub.add_parser("plan", help="Turn a script into scene manifests and generation prompts")
+    plan = sub.add_parser(
+        "plan",
+        help=(
+            "Turn a script into scene "
+            "manifests and generation prompts"
+        ),
+    )
     plan.add_argument("script")
-    plan.add_argument("--project-dir", required=True)
-    plan.add_argument("--title", default="Morrowglass Video")
-    plan.add_argument("--period", default="")
-    plan.add_argument("--location", default="")
-    plan.add_argument("--asset-mode", choices=[m.value for m in AssetMode], default="hybrid")
-    plan.add_argument("--no-llm", action="store_true")
+    plan.add_argument(
+        "--project-dir",
+        required=True,
+    )
+    plan.add_argument(
+        "--title",
+        default="Morrowglass Video",
+    )
+    plan.add_argument(
+        "--period",
+        default="",
+    )
+    plan.add_argument(
+        "--location",
+        default="",
+    )
+    plan.add_argument(
+        "--asset-mode",
+        choices=[
+            mode.value
+            for mode in AssetMode
+        ],
+        default="hybrid",
+    )
+    plan.add_argument(
+        "--no-llm",
+        action="store_true",
+    )
     plan.set_defaults(func=cmd_plan)
 
-    voice = sub.add_parser("voice", help="Generate TTS narration, Whisper word timing, and scene timeline")
-    voice.add_argument("--project-dir", required=True)
-    voice.add_argument("--voice", default="")
-    voice.add_argument("--rate", type=float, default=1.0)
+    voice = sub.add_parser(
+        "voice",
+        help=(
+            "Generate TTS narration, "
+            "Whisper timing, and scene timeline"
+        ),
+    )
+    voice.add_argument(
+        "--project-dir",
+        required=True,
+    )
+    voice.add_argument(
+        "--voice",
+        default="",
+    )
+    voice.add_argument(
+        "--rate",
+        type=float,
+        default=1.0,
+    )
     voice.set_defaults(func=cmd_voice)
 
-    images = sub.add_parser("images", help="Generate missing scene images and run QC")
-    images.add_argument("--project-dir", required=True)
+    images = sub.add_parser(
+        "images",
+        help=(
+            "Generate missing scene "
+            "images and run QC"
+        ),
+    )
+    images.add_argument(
+        "--project-dir",
+        required=True,
+    )
+    _add_comfyui_options(images)
     _add_image_options(images)
-    images.set_defaults(func=cmd_generate_images)
+    images.set_defaults(
+        func=cmd_generate_images
+    )
 
-    status = sub.add_parser("status", help="Check which scene assets are present")
-    status.add_argument("--project-dir", required=True)
+    videos = sub.add_parser(
+        "videos",
+        help=(
+            "Generate ComfyUI videos for "
+            "motion-worthy scenes"
+        ),
+    )
+    videos.add_argument(
+        "--project-dir",
+        required=True,
+    )
+    _add_comfyui_options(videos)
+    _add_video_options(videos)
+    videos.set_defaults(
+        func=cmd_generate_videos
+    )
+
+    status = sub.add_parser(
+        "status",
+        help=(
+            "Check which scene assets "
+            "are present"
+        ),
+    )
+    status.add_argument(
+        "--project-dir",
+        required=True,
+    )
     status.set_defaults(func=cmd_status)
 
-    doctor = sub.add_parser("doctor", help="Check FFmpeg, Kokoro, Whisper, and optional AUTO providers")
+    doctor = sub.add_parser(
+        "doctor",
+        help=(
+            "Check FFmpeg, Kokoro, Whisper, "
+            "ComfyUI, and optional providers"
+        ),
+    )
+    doctor.add_argument(
+        "--project-dir",
+        default="",
+    )
     doctor.set_defaults(func=cmd_doctor)
 
-    render = sub.add_parser("render", help="Render timed scene assets into the final MP4")
-    render.add_argument("--project-dir", required=True)
+    render = sub.add_parser(
+        "render",
+        help=(
+            "Render timed scene assets "
+            "into the final MP4"
+        ),
+    )
+    render.add_argument(
+        "--project-dir",
+        required=True,
+    )
     _add_render_options(render)
     render.set_defaults(func=cmd_render)
 
-    run = sub.add_parser("run", help="Run plan -> voice/timing -> assets -> final render")
+    run = sub.add_parser(
+        "run",
+        help=(
+            "Run plan -> voice/timing -> "
+            "assets -> final render"
+        ),
+    )
     run.add_argument("script")
-    run.add_argument("--project-dir", required=True)
-    run.add_argument("--title", default="Morrowglass Video")
-    run.add_argument("--period", default="")
-    run.add_argument("--location", default="")
-    run.add_argument("--asset-mode", choices=[m.value for m in AssetMode], default="hybrid")
-    run.add_argument("--no-llm", action="store_true")
-    run.add_argument("--voice", default="")
-    run.add_argument("--rate", type=float, default=1.0)
+    run.add_argument(
+        "--project-dir",
+        required=True,
+    )
+    run.add_argument(
+        "--title",
+        default="Morrowglass Video",
+    )
+    run.add_argument(
+        "--period",
+        default="",
+    )
+    run.add_argument(
+        "--location",
+        default="",
+    )
+    run.add_argument(
+        "--asset-mode",
+        choices=[
+            mode.value
+            for mode in AssetMode
+        ],
+        default="hybrid",
+    )
+    run.add_argument(
+        "--no-llm",
+        action="store_true",
+    )
+    run.add_argument(
+        "--voice",
+        default="",
+    )
+    run.add_argument(
+        "--rate",
+        type=float,
+        default=1.0,
+    )
+    _add_comfyui_options(run)
     _add_image_options(run)
+    _add_video_options(run)
     _add_render_options(run)
     run.set_defaults(func=cmd_run)
-    return p
+
+    return parser
 
 
 def main() -> int:
