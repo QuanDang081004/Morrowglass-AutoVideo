@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.morrowglass.audio import (  # noqa: E402
+    ENGLISH_KOKORO_VOICES,
     VIETNAMESE_KOKORO_VOICES,
     narration_fingerprint,
     synthesize_narration,
@@ -577,15 +578,45 @@ with st.sidebar:
             )
             else "am_michael"
         )
-        en_voice = st.text_input(
+        if current_en_voice not in ENGLISH_KOKORO_VOICES:
+            current_en_voice = "am_michael"
+
+        def _english_voice_label(voice_id: str) -> str:
+            prefix, _, name = voice_id.partition("_")
+            accent = (
+                "American"
+                if prefix.startswith("a")
+                else "British"
+            )
+            gender = (
+                "Female"
+                if prefix.endswith("f")
+                else "Male"
+            )
+            display_name = name.replace("_", " ").title()
+            return (
+                f"{accent} {gender} — "
+                f"{display_name} ({voice_id})"
+            )
+
+        en_voice = st.selectbox(
             "English voice",
-            value=current_en_voice,
+            options=list(
+                ENGLISH_KOKORO_VOICES
+            ),
+            index=list(
+                ENGLISH_KOKORO_VOICES
+            ).index(
+                current_en_voice
+            ),
+            format_func=_english_voice_label,
             help=(
-                "Use a voice available in your English "
-                "Kokoro installation, e.g. am_michael."
+                "Official English voices from Kokoro-82M. "
+                "af/am = American female/male; "
+                "bf/bm = British female/male."
             ),
         )
-        voice_name = f"kokoro-en:{en_voice.strip()}"
+        voice_name = f"kokoro-en:{en_voice}"
     else:
         voice_name = st.text_input(
             "MPT voice",
