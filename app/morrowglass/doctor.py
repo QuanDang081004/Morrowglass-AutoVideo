@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
+import subprocess
 import sys
 from dataclasses import dataclass
-from pathlib import Path
 
 import requests
 
@@ -26,7 +27,9 @@ class Check:
     required: bool = True
 
 
-def _check_kokoro(timeout: float = 3.0) -> Check:
+def _check_kokoro_api(
+    timeout: float = 3.0,
+) -> Check:
     base_url = str(
         config.kokoro.get(
             "base_url",
@@ -34,11 +37,17 @@ def _check_kokoro(timeout: float = 3.0) -> Check:
         )
     ).strip().rstrip("/")
     api_key = str(
-        config.kokoro.get("api_key", "") or ""
+        config.kokoro.get(
+            "api_key",
+            "",
+        )
+        or ""
     ).strip()
     headers = {}
     if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+        headers[
+            "Authorization"
+        ] = f"Bearer {api_key}"
 
     try:
         response = requests.get(
@@ -48,37 +57,149 @@ def _check_kokoro(timeout: float = 3.0) -> Check:
         )
         if response.status_code < 400:
             return Check(
-                "Kokoro",
+                "Kokoro API",
                 True,
                 f"reachable at {base_url}",
+                required=False,
             )
         return Check(
-            "Kokoro",
+            "Kokoro API",
             False,
             (
-                f"{base_url}/audio/voices returned "
-                f"HTTP {response.status_code}"
+                f"{base_url}/audio/voices "
+                f"returned HTTP "
+                f"{response.status_code}"
             ),
+            required=False,
         )
     except Exception as exc:
         return Check(
-            "Kokoro",
+            "Kokoro API",
             False,
             (
-                f"not reachable at {base_url}: "
+                f"not reachable at "
+                f"{base_url}: "
                 f"{type(exc).__name__}"
             ),
+            required=False,
         )
+
+
+def _check_local_kokoro(
+    kokoro_python: str | Path | None,
+) -> Check:
+    configured = str(
+        kokoro_python
+        or os.getenv(
+            "MORROWGLASS_KOKORO_PYTHON",
+            "",
+        )
+    ).strip()
+    if not configured:
+        return Check(
+            "Kokoro local",
+            False,
+            (
+                "optional; no external "
+                "Kokoro Python configured"
+            ),
+            required=False,
+        )
+
+    python_path = Path(
+        configured
+    ).expanduser()
+    if not python_path.is_file():
+        return Check(
+            "Kokoro local",
+            False,
+            (
+                "configured Python "
+                f"does not exist: "
+                f"{python_path}"
+            ),
+            required=False,
+        )
+
+    try:
+        result = subprocess.run(
+            [
+                str(python_path),
+                "-c",
+                (
+                    "from kokoro import "
+                    "KPipeline; "
+                    "print('kokoro-ok')"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=20,
+        )
+    except Exception as exc:
+        return Check(
+            "Kokoro local",
+            False,
+            (
+                f"could not run "
+                f"{python_path}: "
+                f"{type(exc).__name__}"
+            ),
+            required=False,
+        )
+
+    if result.returncode == 0:
+        return Check(
+            "Kokoro local",
+            True,
+            (
+                "KPipeline import works "
+                f"via {python_path}"
+            ),
+            required=False,
+        )
+
+    details = (
+        result.stderr
+        or result.stdout
+        or ""
+    ).strip()
+    return Check(
+        "Kokoro local",
+        False,
+        (
+            "KPipeline import failed: "
+            f"{details[-500:]}"
+        ),
+        required=False,
+    )
 
 
 def _check_comfyui(
     project_dir: str | Path | None = None,
 ) -> Check:
-    image_workflow = default_image_workflow(project_dir)
-    video_workflow = default_video_workflow(project_dir)
+    image_workflow = (
+        default_image_workflow(
+            project_dir
+        )
+    )
+    video_workflow = (
+        default_video_workflow(
+            project_dir
+        )
+    )
     configured = bool(
-        (image_workflow and image_workflow.is_file())
-        or (video_workflow and video_workflow.is_file())
+        (
+            image_workflow
+            and image_workflow.is_file()
+        )
+        or (
+            video_workflow
+            and video_workflow.is_file()
+        )
         or os.getenv(
             "MORROWGLASS_COMFYUI_URL",
             "",
@@ -88,17 +209,30 @@ def _check_comfyui(
         return Check(
             "ComfyUI",
             False,
-            "optional; no ComfyUI workflow configured",
+            (
+                "optional; no ComfyUI "
+                "workflow configured"
+            ),
             required=False,
         )
 
     client = ComfyUIClient()
     ready = client.ping()
     workflow_bits = []
-    if image_workflow and image_workflow.is_file():
-        workflow_bits.append("image workflow")
-    if video_workflow and video_workflow.is_file():
-        workflow_bits.append("video workflow")
+    if (
+        image_workflow
+        and image_workflow.is_file()
+    ):
+        workflow_bits.append(
+            "image workflow"
+        )
+    if (
+        video_workflow
+        and video_workflow.is_file()
+    ):
+        workflow_bits.append(
+            "video workflow"
+        )
     workflow_text = (
         ", ".join(workflow_bits)
         if workflow_bits
@@ -108,9 +242,15 @@ def _check_comfyui(
         "ComfyUI",
         ready,
         (
-            f"reachable at {client.base_url}; {workflow_text}"
+            f"reachable at "
+            f"{client.base_url}; "
+            f"{workflow_text}"
             if ready
-            else f"not reachable at {client.base_url}; {workflow_text}"
+            else (
+                f"not reachable at "
+                f"{client.base_url}; "
+                f"{workflow_text}"
+            )
         ),
         required=False,
     )
@@ -118,9 +258,16 @@ def _check_comfyui(
 
 def run_doctor(
     project_dir: str | Path | None = None,
+    *,
+    kokoro_python: str | Path | None = None,
 ) -> list[Check]:
-    python_ok = sys.version_info >= (3, 11)
-    ffmpeg_ok = bool(utils.check_ffmpeg_ready())
+    python_ok = (
+        sys.version_info
+        >= (3, 11)
+    )
+    ffmpeg_ok = bool(
+        utils.check_ffmpeg_ready()
+    )
     mpt_image_ready = bool(
         material.is_openai_image_enabled()
     )
@@ -145,31 +292,50 @@ def run_doctor(
             "FFmpeg",
             ffmpeg_ok,
             (
-                str(utils.get_ffmpeg_binary())
+                str(
+                    utils.get_ffmpeg_binary()
+                )
                 if ffmpeg_ok
                 else "not available"
             ),
         ),
         Check(
             "Whisper",
-            subtitle.WhisperModel is not None,
+            subtitle.WhisperModel
+            is not None,
             (
-                "faster-whisper available; "
-                f"model={subtitle.model_size}"
-                if subtitle.WhisperModel is not None
-                else "faster-whisper is not installed"
+                "faster-whisper "
+                f"available; "
+                f"model="
+                f"{subtitle.model_size}"
+                if (
+                    subtitle.WhisperModel
+                    is not None
+                )
+                else (
+                    "faster-whisper "
+                    "is not installed"
+                )
             ),
         ),
-        _check_kokoro(),
-        _check_comfyui(project_dir),
+        _check_kokoro_api(),
+        _check_local_kokoro(
+            kokoro_python
+        ),
+        _check_comfyui(
+            project_dir
+        ),
         Check(
             "MPT image",
             mpt_image_ready,
             (
-                "OpenAI-compatible image backend configured"
+                "OpenAI-compatible "
+                "image backend configured"
                 if mpt_image_ready
                 else (
-                    "optional; ComfyUI/HYBRID can be used instead"
+                    "optional; "
+                    "ComfyUI/HYBRID "
+                    "can be used instead"
                 )
             ),
             required=False,
@@ -180,7 +346,10 @@ def run_doctor(
             (
                 "semantic QC configured"
                 if vision_ready
-                else "optional; technical image QC only"
+                else (
+                    "optional; technical "
+                    "image QC only"
+                )
             ),
             required=False,
         ),
@@ -188,7 +357,9 @@ def run_doctor(
     return checks
 
 
-def required_checks_pass(checks: list[Check]) -> bool:
+def required_checks_pass(
+    checks: list[Check],
+) -> bool:
     return all(
         check.ok
         for check in checks
