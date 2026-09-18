@@ -66,6 +66,18 @@ VIETNAMESE_KOKORO_VOICES = (
 )
 
 
+def external_tts_enabled() -> bool:
+    return os.getenv(
+        "MORROWGLASS_ALLOW_PAID_PROVIDERS",
+        "",
+    ).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def local_kokoro_engine(
     voice_name: str | None,
 ) -> str | None:
@@ -486,6 +498,11 @@ def synthesize_narration(
             kokoro_vi_device=kokoro_vi_device,
         )
     else:
+        if not external_tts_enabled():
+            raise RuntimeError(
+                "FREE-ONLY mode blocks external/MPT TTS. "
+                "Choose kokoro-en:* or kokoro-vi:*."
+            )
         output = (
             audio_dir
             / "narration.mp3"
