@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import subprocess
 from pathlib import Path
 
@@ -12,9 +13,15 @@ from .models import MorrowglassProject
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
+IMAGE_MOTION_MODES = {"none", "slow_zoom"}
 
 
-def _fit_filter(width: int, height: int, fit_mode: str = "cover", fps: int = 30) -> str:
+def _fit_filter(
+    width: int,
+    height: int,
+    fit_mode: str = "cover",
+    fps: int = 30,
+) -> str:
     mode = VideoFitMode(fit_mode)
     if mode == VideoFitMode.cover:
         return (
@@ -28,6 +35,60 @@ def _fit_filter(width: int, height: int, fit_mode: str = "cover", fps: int = 30)
     )
 
 
+def _image_motion_filter(
+    width: int,
+    height: int,
+    *,
+    duration: float,
+    fit_mode: str = "cover",
+    fps: int = 30,
+    motion_mode: str = "slow_zoom",
+    motion_variant: int = 0,
+) -> str:
+    """Build a subtle deterministic Ken Burns-style filter for still images."""
+    if motion_mode not in IMAGE_MOTION_MODES:
+        raise ValueError(f"unsupported image motion mode: {motion_mode}")
+    if motion_mode == "none":
+        return _fit_filter(width, height, fit_mode, fps)
+
+    mode = VideoFitMode(fit_mode)
+    if mode == VideoFitMode.cover:
+        base = (
+            f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height}"
+        )
+    else:
+        base = (
+            f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black"
+        )
+
+    frames = max(1, int(math.ceil(duration * fps)))
+    zoom_step = 0.06 / frames
+    variant = int(motion_variant) % 5
+
+    center_x = "iw/2-(iw/zoom/2)"
+    center_y = "ih/2-(ih/zoom/2)"
+    x_expr = center_x
+    y_expr = center_y
+    if variant == 1:
+        x_expr = "0"
+    elif variant == 2:
+        x_expr = "iw-iw/zoom"
+    elif variant == 3:
+        y_expr = "0"
+    elif variant == 4:
+        y_expr = "ih-ih/zoom"
+
+    return (
+        f"{base},"
+        f"zoompan=z='min(zoom+{zoom_step:.8f},1.06)':"
+        f"x='{x_expr}':y='{y_expr}':d=1:"
+        f"s={width}x{height}:fps={fps},"
+        "setsar=1,format=yuv420p"
+    )
+
+
 def _build_scene_ffmpeg_command(
     *,
     asset_path: str | Path,
@@ -37,6 +98,8 @@ def _build_scene_ffmpeg_command(
     height: int,
     fit_mode: str = "cover",
     fps: int = 30,
+    image_motion: str = "slow_zoom",
+    motion_variant: int = 0,
     ffmpeg_binary: str | None = None,
 ) -> list[str]:
     asset = Path(asset_path)
@@ -48,16 +111,28 @@ def _build_scene_ffmpeg_command(
 
     command = [ffmpeg_binary or utils.get_ffmpeg_binary(), "-y"]
     if suffix in IMAGE_EXTS:
-        command.extend(["-loop", "1", "-framerate", str(fps), "-i", str(asset)])
+        command.extend(
+            ["-loop", "1", "-framerate", str(fps), "-i", str(asset)]
+        )
+        video_filter = _image_motion_filter(
+            width,
+            height,
+            duration=duration,
+            fit_mode=fit_mode,
+            fps=fps,
+            motion_mode=image_motion,
+            motion_variant=motion_variant,
+        )
     else:
         command.extend(["-stream_loop", "-1", "-i", str(asset)])
+        video_filter = _fit_filter(width, height, fit_mode, fps)
 
     command.extend(
         [
             "-t",
             f"{duration:.3f}",
             "-vf",
-            _fit_filter(width, height, fit_mode, fps),
+            video_filter,
             "-an",
             "-c:v",
             "libx264",
@@ -95,6 +170,7 @@ def render_scene_timeline(
     *,
     fit_mode: str = "cover",
     fps: int = 30,
+    image_motion: str = "slow_zoom",
 ) -> Path:
     """Render every scene to its exact timeline duration, then concatenate."""
     project_dir = Path(project_dir)
@@ -106,17 +182,26 @@ def render_scene_timeline(
     width, height = project.resolution
     clip_files: list[str] = []
 
-    for scene in project.scenes:
+    for scene_index, scene in enumerate(project.scenes):
         if not scene.asset_path:
-            raise FileNotFoundError(f"missing asset for {scene.scene_id}")
+            raise FileNotFoundError(
+                f"missing asset for {scene.scene_id}"
+            )
         asset = Path(scene.asset_path)
         if not asset.is_file():
-            raise FileNotFoundError(f"asset does not exist for {scene.scene_id}: {asset}")
+            raise FileNotFoundError(
+                f"asset does not exist for {scene.scene_id}: {asset}"
+            )
         if scene.start is None or scene.end is None:
-            raise ValueError(f"scene timing is missing for {scene.scene_id}")
+            raise ValueError(
+                f"scene timing is missing for {scene.scene_id}"
+            )
         duration = scene.end - scene.start
         if duration <= 0.02:
-            raise ValueError(f"invalid duration for {scene.scene_id}: {duration:.3f}s")
+            raise ValueError(
+                f"invalid duration for {scene.scene_id}: "
+                f"{duration:.3f}s"
+            )
 
         scene_clip = cache_dir / f"{scene.scene_id}.mp4"
         command = _build_scene_ffmpeg_command(
@@ -127,13 +212,24 @@ def render_scene_timeline(
             height=height,
             fit_mode=fit_mode,
             fps=fps,
+            image_motion=image_motion,
+            motion_variant=scene_index,
         )
-        _run_ffmpeg(command, label=f"render {scene.scene_id}")
+        _run_ffmpeg(
+            command,
+            label=f"render {scene.scene_id}",
+        )
         clip_files.append(str(scene_clip))
 
-    audio_duration = float(project.metadata.get("audio_duration") or 0)
+    audio_duration = float(
+        project.metadata.get("audio_duration") or 0
+    )
     if audio_duration <= 0:
-        audio_duration = float(project.scenes[-1].end or 0) if project.scenes else 0
+        audio_duration = (
+            float(project.scenes[-1].end or 0)
+            if project.scenes
+            else 0
+        )
     if audio_duration <= 0:
         raise ValueError("audio duration is unavailable")
 
@@ -145,7 +241,10 @@ def render_scene_timeline(
         output_dir=str(cache_dir),
         max_duration=audio_duration,
     )
-    project.metadata["combined_video_file"] = str(combined.resolve())
+    project.metadata["combined_video_file"] = str(
+        combined.resolve()
+    )
+    project.metadata["image_motion"] = image_motion
     return combined
 
 
@@ -162,16 +261,30 @@ def render_final_video(
     stroke_color: str = "#000000",
     stroke_width: float = 2.0,
     fit_mode: str = "cover",
+    image_motion: str = "slow_zoom",
 ) -> Path:
     project_dir = Path(project_dir)
-    audio_file = Path(str(project.metadata.get("audio_file") or ""))
-    word_srt = Path(str(project.metadata.get("word_subtitle_file") or ""))
+    audio_file = Path(
+        str(project.metadata.get("audio_file") or "")
+    )
+    word_srt = Path(
+        str(project.metadata.get("word_subtitle_file") or "")
+    )
     if not audio_file.is_file():
-        raise FileNotFoundError("narration audio is missing; run the voice stage first")
+        raise FileNotFoundError(
+            "narration audio is missing; run the voice stage first"
+        )
     if not word_srt.is_file():
-        raise FileNotFoundError("word timing is missing; run the voice stage first")
+        raise FileNotFoundError(
+            "word timing is missing; run the voice stage first"
+        )
 
-    combined = render_scene_timeline(project, project_dir, fit_mode=fit_mode)
+    combined = render_scene_timeline(
+        project,
+        project_dir,
+        fit_mode=fit_mode,
+        image_motion=image_motion,
+    )
     subtitle_file = build_readable_captions(
         word_srt,
         project_dir / "subtitles" / "captions.srt",
@@ -197,12 +310,16 @@ def render_final_video(
         stroke_width=float(stroke_width),
         n_threads=2,
     )
-    final_file = project_dir / "output" / "morrowglass_final.mp4"
+    final_file = (
+        project_dir / "output" / "morrowglass_final.mp4"
+    )
     bgm_override = ""
     if bgm_file:
         candidate = Path(bgm_file)
         if not candidate.is_file():
-            raise FileNotFoundError(f"BGM file does not exist: {candidate}")
+            raise FileNotFoundError(
+                f"BGM file does not exist: {candidate}"
+            )
         bgm_override = str(candidate.resolve())
 
     video.generate_video(
@@ -213,11 +330,20 @@ def render_final_video(
         params=params,
         bgm_file_override=bgm_override,
     )
-    if not final_file.is_file() or final_file.stat().st_size == 0:
-        raise RuntimeError("final render did not produce a video")
+    if (
+        not final_file.is_file()
+        or final_file.stat().st_size == 0
+    ):
+        raise RuntimeError(
+            "final render did not produce a video"
+        )
 
-    project.metadata["subtitle_file"] = str(subtitle_file.resolve())
-    project.metadata["final_video_file"] = str(final_file.resolve())
+    project.metadata["subtitle_file"] = str(
+        subtitle_file.resolve()
+    )
+    project.metadata["final_video_file"] = str(
+        final_file.resolve()
+    )
     project.metadata["bgm_file"] = bgm_override
     project.save(project_dir / "project.json")
     return final_file
