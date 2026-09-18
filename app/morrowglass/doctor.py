@@ -23,14 +23,16 @@ def _check_kokoro(timeout: float = 3.0) -> Check:
     base_url = str(
         config.kokoro.get("base_url", "http://127.0.0.1:8880/v1")
     ).strip().rstrip("/")
-    api_key = str(config.kokoro.get("api_key", "") or "").strip()
+    api_key = str(
+        config.kokoro.get("api_key", "") or ""
+    ).strip()
     headers = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
     try:
         response = requests.get(
-            f"{base_url}/models",
+            f"{base_url}/audio/voices",
             headers=headers,
             timeout=timeout,
         )
@@ -43,18 +45,37 @@ def _check_kokoro(timeout: float = 3.0) -> Check:
         return Check(
             "Kokoro",
             False,
-            f"{base_url} returned HTTP {response.status_code}",
+            (
+                f"{base_url}/audio/voices returned "
+                f"HTTP {response.status_code}"
+            ),
         )
     except Exception as exc:
         return Check(
             "Kokoro",
             False,
-            f"not reachable at {base_url}: {type(exc).__name__}",
+            (
+                f"not reachable at {base_url}: "
+                f"{type(exc).__name__}"
+            ),
         )
 
 
 def run_doctor() -> list[Check]:
     python_ok = sys.version_info >= (3, 11)
+    ffmpeg_ok = bool(utils.check_ffmpeg_ready())
+    image_ready = bool(material.is_openai_image_enabled())
+    vision_ready = bool(
+        os.getenv(
+            "MORROWGLASS_VISION_BASE_URL",
+            "",
+        ).strip()
+        and os.getenv(
+            "MORROWGLASS_VISION_MODEL",
+            "",
+        ).strip()
+    )
+
     checks = [
         Check(
             "Python",
@@ -63,10 +84,10 @@ def run_doctor() -> list[Check]:
         ),
         Check(
             "FFmpeg",
-            bool(utils.check_ffmpeg_ready()),
+            ffmpeg_ok,
             (
                 str(utils.get_ffmpeg_binary())
-                if utils.check_ffmpeg_ready()
+                if ffmpeg_ok
                 else "not available"
             ),
         ),
@@ -74,7 +95,8 @@ def run_doctor() -> list[Check]:
             "Whisper",
             subtitle.WhisperModel is not None,
             (
-                f"faster-whisper available; model={subtitle.model_size}"
+                "faster-whisper available; "
+                f"model={subtitle.model_size}"
                 if subtitle.WhisperModel is not None
                 else "faster-whisper is not installed"
             ),
@@ -82,28 +104,23 @@ def run_doctor() -> list[Check]:
         _check_kokoro(),
         Check(
             "Auto image",
-            bool(material.is_openai_image_enabled()),
+            image_ready,
             (
                 "OpenAI-compatible image backend configured"
-                if material.is_openai_image_enabled()
+                if image_ready
                 else (
-                    "not configured; HYBRID/manual prompts still work"
+                    "not configured; HYBRID/manual prompts "
+                    "still work"
                 )
             ),
             required=False,
         ),
         Check(
             "Vision QC",
-            bool(
-                os.getenv("MORROWGLASS_VISION_BASE_URL", "").strip()
-                and os.getenv("MORROWGLASS_VISION_MODEL", "").strip()
-            ),
+            vision_ready,
             (
                 "semantic QC configured"
-                if (
-                    os.getenv("MORROWGLASS_VISION_BASE_URL", "").strip()
-                    and os.getenv("MORROWGLASS_VISION_MODEL", "").strip()
-                )
+                if vision_ready
                 else "optional; technical image QC only"
             ),
             required=False,
@@ -113,4 +130,8 @@ def run_doctor() -> list[Check]:
 
 
 def required_checks_pass(checks: list[Check]) -> bool:
-    return all(check.ok for check in checks if check.required)
+    return all(
+        check.ok
+        for check in checks
+        if check.required
+    )
