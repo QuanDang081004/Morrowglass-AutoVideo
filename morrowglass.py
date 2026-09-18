@@ -8,6 +8,7 @@ from app.morrowglass.assets import (
     missing_scene_ids,
     resolve_assets,
 )
+from app.morrowglass.audio import narration_fingerprint
 from app.morrowglass.comfyui import default_video_workflow
 from app.morrowglass.doctor import (
     required_checks_pass,
@@ -36,6 +37,53 @@ def _pipeline(
 ) -> MorrowglassPipeline:
     return MorrowglassPipeline(
         llm_call=_mpt_llm_call if use_llm else None
+    )
+
+
+def _resolved_tts_settings(
+    project: MorrowglassProject,
+    args,
+) -> tuple[str, float, float]:
+    voice_name = (
+        getattr(args, "voice", "")
+        or project.voice_name
+    )
+    stored_rate = float(
+        project.metadata.get(
+            "voice_rate",
+            1.0,
+        )
+    )
+    stored_volume = float(
+        project.metadata.get(
+            "voice_volume",
+            1.0,
+        )
+    )
+    rate_arg = getattr(
+        args,
+        "rate",
+        None,
+    )
+    volume_arg = getattr(
+        args,
+        "volume",
+        None,
+    )
+    voice_rate = (
+        float(rate_arg)
+        if rate_arg is not None
+        else stored_rate
+    )
+    voice_volume = (
+        float(volume_arg)
+        if volume_arg is not None
+        else stored_volume
+    )
+    return (
+        voice_name,
+        voice_rate,
+        voice_volume,
     )
 
 
@@ -74,12 +122,18 @@ def cmd_voice(args) -> int:
         Path(args.project_dir) / "project.json"
     )
     project = MorrowglassProject.load(manifest)
+    voice_name, voice_rate, voice_volume = (
+        _resolved_tts_settings(
+            project,
+            args,
+        )
+    )
     _pipeline(False).build_audio_timeline(
         project,
         args.project_dir,
-        voice_name=args.voice or None,
-        voice_rate=args.rate,
-        voice_volume=args.volume,
+        voice_name=voice_name,
+        voice_rate=voice_rate,
+        voice_volume=voice_volume,
         kokoro_python=args.kokoro_python or None,
         kokoro_en_python=args.kokoro_en_python or None,
         kokoro_vi_python=args.kokoro_vi_python or None,
@@ -362,6 +416,14 @@ def cmd_run(args) -> int:
             project.voice_name = args.voice
         project.save(manifest)
 
+    (
+        voice_name,
+        voice_rate,
+        voice_volume,
+    ) = _resolved_tts_settings(
+        project,
+        args,
+    )
     audio_file = Path(
         str(
             project.metadata.get(
@@ -378,9 +440,36 @@ def cmd_run(args) -> int:
             or ""
         )
     )
+    expected_tts_fingerprint = (
+        narration_fingerprint(
+            project,
+            voice_name=voice_name,
+            voice_rate=voice_rate,
+            voice_volume=voice_volume,
+            kokoro_python=(
+                args.kokoro_python
+                or None
+            ),
+            kokoro_en_python=(
+                args.kokoro_en_python
+                or None
+            ),
+            kokoro_vi_python=(
+                args.kokoro_vi_python
+                or None
+            ),
+            kokoro_vi_device=(
+                args.kokoro_vi_device
+            ),
+        )
+    )
     audio_ready = (
         audio_file.is_file()
         and word_timing_file.is_file()
+        and project.metadata.get(
+            "tts_fingerprint"
+        )
+        == expected_tts_fingerprint
     )
     timing_ready = (
         bool(project.scenes)
@@ -397,9 +486,9 @@ def cmd_run(args) -> int:
         _pipeline(False).build_audio_timeline(
             project,
             project_dir,
-            voice_name=args.voice or None,
-            voice_rate=args.rate,
-            voice_volume=args.volume,
+            voice_name=voice_name,
+            voice_rate=voice_rate,
+            voice_volume=voice_volume,
             kokoro_python=args.kokoro_python or None,
             kokoro_en_python=args.kokoro_en_python or None,
             kokoro_vi_python=args.kokoro_vi_python or None,
@@ -571,14 +660,20 @@ def _add_tts_options(parser) -> None:
     parser.add_argument(
         "--rate",
         type=float,
-        default=1.0,
-        help="Narration speed. Default: 1.0.",
+        default=None,
+        help=(
+            "Narration speed. Reuses the project value "
+            "when omitted; new projects default to 1.0."
+        ),
     )
     parser.add_argument(
         "--volume",
         type=float,
-        default=1.0,
-        help="Narration volume multiplier. Default: 1.0.",
+        default=None,
+        help=(
+            "Narration volume. Reuses the project value "
+            "when omitted; new projects default to 1.0."
+        ),
     )
     parser.add_argument(
         "--kokoro-python",
