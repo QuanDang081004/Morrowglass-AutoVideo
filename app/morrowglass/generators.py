@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import hashlib
 import math
 import shutil
@@ -11,6 +12,7 @@ from app.services import material
 from .archive import (
     attribution_record,
     download_archive_image,
+    rank_archive_assets,
     search_wikimedia_images,
     write_attribution_file,
 )
@@ -153,12 +155,20 @@ def _generate_wikimedia_candidate(
     )
     assets = search_wikimedia_images(
         query,
-        limit=max(8, attempt + 4),
+        limit=max(12, attempt + 8),
         thumb_width=1920,
     )
     if not assets:
         return None, None
 
+    assets = rank_archive_assets(
+        assets,
+        query=query,
+        visual_description=(
+            scene.visual_description
+            or scene.narration
+        ),
+    )
     index = min(
         max(0, int(attempt) - 1),
         len(assets) - 1,
