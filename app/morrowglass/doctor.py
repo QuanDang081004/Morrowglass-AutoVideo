@@ -17,6 +17,10 @@ from .comfyui import (
     default_image_workflow,
     default_video_workflow,
 )
+from .tts_profiles import (
+    default_kokoro_en_python,
+    default_kokoro_vi_python,
+)
 
 
 @dataclass(slots=True)
@@ -290,21 +294,11 @@ def run_doctor(
     en_python = (
         kokoro_en_python
         or kokoro_python
-        or os.getenv(
-            "MORROWGLASS_KOKORO_EN_PYTHON",
-            "",
-        )
-        or os.getenv(
-            "MORROWGLASS_KOKORO_PYTHON",
-            "",
-        )
+        or default_kokoro_en_python()
     )
     vi_python = (
         kokoro_vi_python
-        or os.getenv(
-            "MORROWGLASS_KOKORO_VI_PYTHON",
-            "",
-        )
+        or default_kokoro_vi_python()
     )
 
     checks = [
