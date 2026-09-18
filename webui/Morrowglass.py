@@ -36,6 +36,10 @@ from app.morrowglass.models import (  # noqa: E402
 from app.morrowglass.pipeline import (  # noqa: E402
     MorrowglassPipeline,
 )
+from app.morrowglass.tts_profiles import (  # noqa: E402
+    default_kokoro_en_python as detect_kokoro_en_python,
+    default_kokoro_vi_python as detect_kokoro_vi_python,
+)
 from app.services import llm  # noqa: E402
 
 
@@ -411,24 +415,14 @@ default_kokoro_en_python = str(
         "kokoro_python",
         "",
     )
-    or os.getenv(
-        "MORROWGLASS_KOKORO_EN_PYTHON",
-        "",
-    )
-    or os.getenv(
-        "MORROWGLASS_KOKORO_PYTHON",
-        "",
-    )
+    or detect_kokoro_en_python()
 )
 default_kokoro_vi_python = str(
     stored.get(
         "kokoro_vi_python",
         "",
     )
-    or os.getenv(
-        "MORROWGLASS_KOKORO_VI_PYTHON",
-        "",
-    )
+    or detect_kokoro_vi_python()
 )
 default_voice_rate = float(
     stored.get(
