@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import hashlib
+import json
 import math
 import shutil
 from pathlib import Path
@@ -50,6 +51,48 @@ def paid_providers_enabled() -> bool:
 
 def mpt_openai_image_ready() -> bool:
     return bool(material.is_openai_image_enabled())
+
+
+def _file_sha256(
+    path: str | Path,
+) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(
+            lambda: handle.read(1024 * 1024),
+            b"",
+        ):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _motion_source_fingerprint(
+    *,
+    scene,
+    project: MorrowglassProject,
+    image: Path,
+    workflow_path: Path,
+) -> str:
+    payload = {
+        "scene_id": scene.scene_id,
+        "image_sha256": _file_sha256(image),
+        "image_prompt": scene.image_prompt,
+        "motion_prompt": scene.motion_prompt,
+        "aspect": project.aspect,
+        "resolution": list(project.resolution),
+        "workflow_sha256": _file_sha256(
+            workflow_path
+        ),
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(
+        encoded
+    ).hexdigest()
 
 
 def _scene_seed(scene_id: str, attempt: int = 1) -> int:
@@ -453,6 +496,10 @@ def generate_motion_scene_videos(
 
     failures: list[str] = []
     generated: list[str] = []
+    video_sources = dict(
+        project.metadata.get("video_sources")
+        or {}
+    )
     width, height = project.resolution
 
     for scene in project.scenes:
@@ -467,12 +514,6 @@ def generate_motion_scene_videos(
             for item in videos_dir.glob(f"{scene.scene_id}.*")
             if item.is_file()
         ]
-        if existing_videos and not overwrite:
-            scene.asset_path = str(existing_videos[0].resolve())
-            continue
-        if overwrite:
-            for item in existing_videos:
-                item.unlink()
 
         image = _find_scene_image(
             project_dir,
@@ -484,6 +525,39 @@ def generate_motion_scene_videos(
                 "video generation skipped: source image is missing"
             )
             continue
+
+        source_fingerprint = (
+            _motion_source_fingerprint(
+                scene=scene,
+                project=project,
+                image=image,
+                workflow_path=workflow_path,
+            )
+        )
+        previous_source = video_sources.get(
+            scene.scene_id,
+            {}
+        )
+        can_reuse_video = (
+            bool(existing_videos)
+            and not overwrite
+            and isinstance(
+                previous_source,
+                dict,
+            )
+            and previous_source.get(
+                "fingerprint"
+            )
+            == source_fingerprint
+        )
+        if can_reuse_video:
+            scene.asset_path = str(
+                existing_videos[0].resolve()
+            )
+            continue
+
+        for item in existing_videos:
+            item.unlink()
 
         try:
             uploaded_name = client.upload_image(image)
@@ -517,6 +591,22 @@ def generate_motion_scene_videos(
             if candidate.resolve() != target.resolve():
                 shutil.move(str(candidate), str(target))
             scene.asset_path = str(target.resolve())
+            video_sources[
+                scene.scene_id
+            ] = {
+                "fingerprint": (
+                    source_fingerprint
+                ),
+                "source_image": str(
+                    image.resolve()
+                ),
+                "source_image_sha256": (
+                    _file_sha256(image)
+                ),
+                "video_file": str(
+                    target.resolve()
+                ),
+            }
             generated.append(scene.scene_id)
         except Exception as exc:
             failures.append(scene.scene_id)
@@ -532,5 +622,6 @@ def generate_motion_scene_videos(
     project.metadata["comfyui_url"] = client.base_url
     project.metadata["video_generation_failures"] = failures
     project.metadata["video_generated_scenes"] = generated
+    project.metadata["video_sources"] = video_sources
     project.save(project_dir / "project.json")
     return failures
