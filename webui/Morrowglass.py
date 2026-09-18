@@ -307,6 +307,7 @@ def _save_ui_settings(
     manifest: Path,
     *,
     asset_mode: str,
+    aspect: str,
     voice_name: str,
     voice_rate: float,
     voice_volume: float,
@@ -322,6 +323,7 @@ def _save_ui_settings(
     project.asset_mode = AssetMode(
         asset_mode
     )
+    project.set_aspect(aspect)
     project.voice_name = voice_name
     project.metadata[
         "voice_rate"
@@ -508,6 +510,33 @@ with st.sidebar:
         help=(
             "Optional. Leave blank and "
             "the Scene Director will infer it."
+        ),
+    )
+    aspect_options = [
+        "16:9",
+        "9:16",
+    ]
+    current_aspect = (
+        project.aspect
+        if project
+        else "16:9"
+    )
+    if current_aspect not in aspect_options:
+        current_aspect = "16:9"
+    output_aspect = st.selectbox(
+        "Output format",
+        options=aspect_options,
+        index=aspect_options.index(
+            current_aspect
+        ),
+        format_func=lambda value: (
+            "Horizontal 16:9 — YouTube"
+            if value == "16:9"
+            else "Vertical 9:16 — Shorts/TikTok"
+        ),
+        help=(
+            "This controls planning, generation framing, "
+            "scene rendering, subtitles, and final resolution."
         ),
     )
     asset_mode_value = st.selectbox(
@@ -936,12 +965,14 @@ try:
                 asset_mode=AssetMode(
                     asset_mode_value
                 ),
+                aspect=output_aspect,
                 use_llm=True,
             )
             _save_ui_settings(
                 project,
                 manifest,
                 asset_mode=asset_mode_value,
+                aspect=output_aspect,
                 voice_name=voice_name,
                 voice_rate=voice_rate,
                 voice_volume=voice_volume,
@@ -974,6 +1005,7 @@ try:
                 project,
                 manifest,
                 asset_mode=asset_mode_value,
+                aspect=output_aspect,
                 voice_name=voice_name,
                 voice_rate=voice_rate,
                 voice_volume=voice_volume,
@@ -1031,6 +1063,7 @@ try:
                 project,
                 manifest,
                 asset_mode=asset_mode_value,
+                aspect=output_aspect,
                 voice_name=voice_name,
                 voice_rate=voice_rate,
                 voice_volume=voice_volume,
@@ -1117,6 +1150,7 @@ try:
                 project,
                 manifest,
                 asset_mode=asset_mode_value,
+                aspect=output_aspect,
                 voice_name=voice_name,
                 voice_rate=voice_rate,
                 voice_volume=voice_volume,
@@ -1175,6 +1209,7 @@ try:
                         asset_mode=(
                             asset_mode_value
                         ),
+                        aspect=output_aspect,
                         voice_name=voice_name,
                         voice_rate=voice_rate,
                         voice_volume=voice_volume,
@@ -1228,6 +1263,7 @@ try:
                         asset_mode=AssetMode(
                             asset_mode_value
                         ),
+                        aspect=output_aspect,
                         use_llm=True,
                     )
                     _save_ui_settings(
@@ -1236,6 +1272,7 @@ try:
                         asset_mode=(
                             asset_mode_value
                         ),
+                        aspect=output_aspect,
                         voice_name=voice_name,
                         voice_rate=voice_rate,
                         voice_volume=voice_volume,
@@ -1304,12 +1341,11 @@ try:
                         ),
                     )
                     if failures:
-                        raise RuntimeError(
-                            "AUTO image generation "
-                            "still failed for: "
-                            + ", ".join(
-                                failures
-                            )
+                        status.write(
+                            "Free AUTO assets could not resolve "
+                            "every scene. Manual fallback will be "
+                            "offered only for the remaining scenes: "
+                            + ", ".join(failures)
                         )
                     project = _load_project(
                         project_dir
