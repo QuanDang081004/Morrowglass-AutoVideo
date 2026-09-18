@@ -24,6 +24,7 @@ from app.morrowglass.models import (
     VisualBible,
 )
 from app.morrowglass.pipeline import MorrowglassPipeline
+from app.morrowglass.timeline import TIMELINE_VERSION
 
 
 def _mpt_llm_call(prompt: str) -> str:
@@ -472,7 +473,9 @@ def cmd_run(args) -> int:
         == expected_tts_fingerprint
     )
     timing_ready = (
-        bool(project.scenes)
+        project.metadata.get("timeline_version")
+        == TIMELINE_VERSION
+        and bool(project.scenes)
         and all(
             scene.start is not None
             and scene.end is not None
