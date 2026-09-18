@@ -5,17 +5,53 @@ from pathlib import Path
 import subprocess
 
 
-LOCAL_KOKORO_PREFIX = "kokoro-local:"
+KOKORO_EN_PREFIX = "kokoro-en:"
+KOKORO_VI_PREFIX = "kokoro-vi:"
+LEGACY_LOCAL_KOKORO_PREFIX = "kokoro-local:"
+
+VIETNAMESE_KOKORO_VOICES = (
+    "diem_trinh",
+    "hung_thinh",
+    "mai_linh",
+    "mai_loan",
+    "manh_dung",
+    "my_yen",
+    "ngoc_huyen",
+    "phat_tai",
+    "thanh_dat",
+    "thuc_trinh",
+    "tuan_ngoc",
+    "storyvert",
+    "duc_an",
+    "duc_duy",
+)
+
+
+def local_kokoro_engine(
+    voice_name: str | None,
+) -> str | None:
+    value = str(
+        voice_name or ""
+    ).strip()
+    if value.startswith(
+        KOKORO_VI_PREFIX
+    ):
+        return "vietnamese"
+    if value.startswith(
+        KOKORO_EN_PREFIX
+    ) or value.startswith(
+        LEGACY_LOCAL_KOKORO_PREFIX
+    ):
+        return "english"
+    return None
 
 
 def is_local_kokoro_voice(
     voice_name: str | None,
 ) -> bool:
-    return str(
-        voice_name or ""
-    ).startswith(
-        LOCAL_KOKORO_PREFIX
-    )
+    return local_kokoro_engine(
+        voice_name
+    ) is not None
 
 
 def _local_kokoro_voice_id(
@@ -34,20 +70,42 @@ def _local_kokoro_voice_id(
 
 def _resolve_kokoro_python(
     value: str | Path | None,
+    *,
+    engine: str = "english",
+    legacy_value: str | Path | None = None,
 ) -> Path:
+    if engine == "vietnamese":
+        env_name = (
+            "MORROWGLASS_KOKORO_VI_PYTHON"
+        )
+    else:
+        env_name = (
+            "MORROWGLASS_KOKORO_EN_PYTHON"
+        )
+
     configured = str(
         value
+        or os.getenv(
+            env_name,
+            "",
+        )
+        or legacy_value
         or os.getenv(
             "MORROWGLASS_KOKORO_PYTHON",
             "",
         )
     ).strip()
     if not configured:
+        label = (
+            "Vietnamese"
+            if engine == "vietnamese"
+            else "English"
+        )
         raise FileNotFoundError(
-            "Local Kokoro selected but no Python "
+            f"{label} Kokoro selected but no Python "
             "interpreter was configured. Set "
-            "MORROWGLASS_KOKORO_PYTHON or choose "
-            "the Kokoro Python path in the WebUI."
+            f"{env_name} or choose the matching "
+            "Kokoro Python path in the WebUI."
         )
 
     python_path = Path(
@@ -61,17 +119,109 @@ def _resolve_kokoro_python(
     return python_path
 
 
+def _postprocess_local_audio(
+    audio_file: Path,
+    *,
+    speed: float,
+    volume: float,
+    engine: str,
+) -> None:
+    filters: list[str] = []
+
+    if (
+        engine == "vietnamese"
+        and abs(float(speed) - 1.0)
+        > 0.001
+    ):
+        speed_value = float(speed)
+        if not 0.5 <= speed_value <= 2.0:
+            raise ValueError(
+                "Vietnamese Kokoro speed must be "
+                "between 0.5 and 2.0"
+            )
+        filters.append(
+            f"atempo={speed_value:.4f}"
+        )
+
+    if abs(
+        float(volume) - 1.0
+    ) > 0.001:
+        filters.append(
+            f"volume={float(volume):.4f}"
+        )
+
+    if not filters:
+        return
+
+    from app.utils import utils
+
+    temp_file = audio_file.with_name(
+        f"{audio_file.stem}.processed.wav"
+    )
+    command = [
+        utils.get_ffmpeg_binary(),
+        "-y",
+        "-i",
+        str(audio_file),
+        "-af",
+        ",".join(filters),
+        "-c:a",
+        "pcm_s16le",
+        str(temp_file),
+    ]
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        timeout=600,
+    )
+    if result.returncode != 0:
+        details = (
+            result.stderr
+            or result.stdout
+            or ""
+        ).strip()
+        raise RuntimeError(
+            "Kokoro audio post-processing "
+            f"failed: {details[-3000:]}"
+        )
+    temp_file.replace(audio_file)
+
+
 def _synthesize_local_kokoro(
     project,
     project_dir: Path,
     *,
     selected_voice: str,
     voice_rate: float,
+    voice_volume: float,
     kokoro_python: str | Path | None,
+    kokoro_en_python: str | Path | None,
+    kokoro_vi_python: str | Path | None,
+    kokoro_vi_device: str,
 ) -> Path:
-    python_path = _resolve_kokoro_python(
-        kokoro_python
+    engine = local_kokoro_engine(
+        selected_voice
     )
+    if engine is None:
+        raise ValueError(
+            f"not a local Kokoro voice: {selected_voice}"
+        )
+
+    profile_python = (
+        kokoro_vi_python
+        if engine == "vietnamese"
+        else kokoro_en_python
+    )
+    python_path = _resolve_kokoro_python(
+        profile_python,
+        engine=engine,
+        legacy_value=kokoro_python,
+    )
+
     repo_root = Path(
         __file__
     ).resolve().parents[2]
@@ -111,6 +261,8 @@ def _synthesize_local_kokoro(
     command = [
         str(python_path),
         str(bridge),
+        "--engine",
+        engine,
         "--text-file",
         str(text_file),
         "--output",
@@ -120,8 +272,19 @@ def _synthesize_local_kokoro(
             selected_voice
         ),
         "--speed",
-        str(float(voice_rate)),
+        str(
+            float(voice_rate)
+            if engine == "english"
+            else 1.0
+        ),
+        "--device",
+        (
+            kokoro_vi_device
+            if engine == "vietnamese"
+            else "cpu"
+        ),
     ]
+
     result = subprocess.run(
         command,
         capture_output=True,
@@ -149,6 +312,16 @@ def _synthesize_local_kokoro(
             "Local Kokoro produced no audio file"
         )
 
+    _postprocess_local_audio(
+        output,
+        speed=voice_rate,
+        volume=voice_volume,
+        engine=engine,
+    )
+
+    project.metadata[
+        "kokoro_engine"
+    ] = engine
     project.metadata[
         "kokoro_python"
     ] = str(
@@ -156,7 +329,20 @@ def _synthesize_local_kokoro(
     )
     project.metadata[
         "tts_provider"
-    ] = "kokoro-local"
+    ] = (
+        f"kokoro-{engine}-local"
+    )
+    project.metadata[
+        "voice_rate"
+    ] = float(voice_rate)
+    project.metadata[
+        "voice_volume"
+    ] = float(voice_volume)
+    if engine == "vietnamese":
+        project.metadata[
+            "kokoro_vi_device"
+        ] = kokoro_vi_device
+
     return output
 
 
@@ -168,6 +354,9 @@ def synthesize_narration(
     voice_rate: float = 1.0,
     voice_volume: float = 1.0,
     kokoro_python: str | Path | None = None,
+    kokoro_en_python: str | Path | None = None,
+    kokoro_vi_python: str | Path | None = None,
+    kokoro_vi_device: str = "cpu",
 ) -> tuple[Path, float]:
     """Generate narration using local Kokoro or MPT's TTS stack."""
     from app.services import voice
@@ -196,7 +385,11 @@ def synthesize_narration(
             project_dir,
             selected_voice=selected_voice,
             voice_rate=voice_rate,
+            voice_volume=voice_volume,
             kokoro_python=kokoro_python,
+            kokoro_en_python=kokoro_en_python,
+            kokoro_vi_python=kokoro_vi_python,
+            kokoro_vi_device=kokoro_vi_device,
         )
     else:
         output = (
@@ -223,6 +416,12 @@ def synthesize_narration(
         project.metadata[
             "tts_provider"
         ] = "mpt"
+        project.metadata[
+            "voice_rate"
+        ] = float(voice_rate)
+        project.metadata[
+            "voice_volume"
+        ] = float(voice_volume)
 
     duration = float(
         voice.get_audio_duration(
