@@ -104,7 +104,6 @@ def cmd_render(args) -> int:
             font_size=args.font_size,
             subtitle_position=args.subtitle_position,
             fit_mode=args.fit_mode,
-        image_motion=args.image_motion,
             image_motion=args.image_motion,
         )
     except FileNotFoundError as exc:
