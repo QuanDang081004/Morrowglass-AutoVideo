@@ -175,6 +175,36 @@ Optional local BGM:
 python morrowglass.py render --project-dir D:\Morrowglass\Video02 --bgm D:\Music\history.mp3 --bgm-volume 0.12
 ```
 
+## Existing local Kokoro (no FastAPI required)
+
+Morrowglass can reuse an existing Kokoro `KPipeline` environment directly.
+
+Use the voice prefix:
+
+```text
+kokoro-local:am_michael
+```
+
+and point Morrowglass at the Python executable inside the Kokoro venv:
+
+```bat
+python morrowglass.py voice --project-dir D:\\Morrowglass\\Video02 --voice kokoro-local:am_michael --kokoro-python C:\\MorrowglassTTS\\venv\\Scripts\\python.exe
+```
+
+For a full run:
+
+```bat
+python morrowglass.py run script.txt --project-dir D:\\Morrowglass\\Video02 --asset-mode hybrid --voice kokoro-local:am_michael --kokoro-python C:\\MorrowglassTTS\\venv\\Scripts\\python.exe
+```
+
+The path can also be set once for the current terminal:
+
+```bat
+set MORROWGLASS_KOKORO_PYTHON=C:\\MorrowglassTTS\\venv\\Scripts\\python.exe
+```
+
+The dedicated WebUI exposes the same **Local Kokoro Python** field. The bridge runs the existing Kokoro environment as a separate process, so MoneyPrinterTurbo does not need Kokoro/Torch installed in its own Python environment.
+
 ## Optional semantic vision QC
 
 Technical QC always works locally. Semantic scene matching is enabled when these environment variables are present:
