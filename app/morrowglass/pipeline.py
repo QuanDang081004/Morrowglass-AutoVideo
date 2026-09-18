@@ -27,9 +27,9 @@ class MorrowglassPipeline:
         return project
     def refresh_assets(self, project: MorrowglassProject, project_dir: str | Path) -> list[str]:
         resolve_assets(project, project_dir); project.save(Path(project_dir) / "project.json"); return missing_scene_ids(project)
-    def auto_generate_images(self, project: MorrowglassProject, project_dir: str | Path, *, overwrite: bool = False) -> list[str]:
+    def auto_generate_images(self, project: MorrowglassProject, project_dir: str | Path, *, overwrite: bool = False, semantic_qc: bool = True, min_qc_score: float = 75.0, max_attempts: int = 2) -> list[str]:
         self.refresh_assets(project, project_dir)
-        failures = generate_missing_scene_images(project, project_dir, overwrite=overwrite)
+        failures = generate_missing_scene_images(project, project_dir, overwrite=overwrite, semantic_qc=semantic_qc, min_qc_score=min_qc_score, max_attempts=max_attempts)
         self.refresh_assets(project, project_dir)
         return failures
     def render(self, project: MorrowglassProject, project_dir: str | Path, **kwargs) -> Path:
