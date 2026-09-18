@@ -9,6 +9,7 @@ from .assets import (
     write_prompt_pack,
 )
 from .audio import synthesize_narration, transcribe_word_timing
+from .bible import enrich_visual_bible
 from .director import SceneDirector
 from .generators import generate_missing_scene_images
 from .models import AssetMode, MorrowglassProject, VisualBible
@@ -46,6 +47,13 @@ class MorrowglassPipeline:
         ):
             (project_dir / name).mkdir(exist_ok=True)
 
+        bible = bible or VisualBible()
+        if use_llm:
+            bible = enrich_visual_bible(
+                script,
+                bible,
+                llm_call=self.director.llm_call,
+            )
         project = self.director.plan(
             script,
             title=title,
