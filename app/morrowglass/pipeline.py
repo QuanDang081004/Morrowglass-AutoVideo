@@ -6,6 +6,7 @@ from .assets import missing_scene_ids, resolve_assets, write_prompt_pack
 from .audio import synthesize_narration, transcribe_word_timing
 from .director import SceneDirector
 from .models import AssetMode, MorrowglassProject, VisualBible
+from .renderer import render_final_video
 from .timeline import assign_from_srt, parse_srt
 
 class MorrowglassPipeline:
@@ -25,3 +26,8 @@ class MorrowglassPipeline:
         return project
     def refresh_assets(self, project: MorrowglassProject, project_dir: str | Path) -> list[str]:
         resolve_assets(project, project_dir); project.save(Path(project_dir) / "project.json"); return missing_scene_ids(project)
+    def render(self, project: MorrowglassProject, project_dir: str | Path, **kwargs) -> Path:
+        missing = self.refresh_assets(project, project_dir)
+        if missing:
+            raise FileNotFoundError("missing scene assets: " + ", ".join(missing))
+        return render_final_video(project, project_dir, **kwargs)
