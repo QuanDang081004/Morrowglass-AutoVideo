@@ -8,6 +8,12 @@ from pathlib import Path
 from app.models.schema import VideoAspect
 from app.services import material
 
+from .archive import (
+    attribution_record,
+    download_archive_image,
+    search_wikimedia_images,
+    write_attribution_file,
+)
 from .comfyui import (
     ComfyUIClient,
     default_image_workflow,
@@ -45,9 +51,15 @@ def _resolve_image_provider(
     comfyui_workflow: str | Path | None,
 ) -> tuple[str, Path | None]:
     provider = str(provider or "auto").strip().lower()
-    if provider not in {"auto", "mpt_openai", "comfyui"}:
+    if provider not in {
+        "auto",
+        "wikimedia",
+        "mpt_openai",
+        "comfyui",
+    }:
         raise ValueError(
-            "image provider must be one of: auto, mpt_openai, comfyui"
+            "image provider must be one of: "
+            "auto, wikimedia, mpt_openai, comfyui"
         )
 
     workflow_path = (
@@ -65,6 +77,9 @@ def _resolve_image_provider(
             )
         return "comfyui", workflow_path
 
+    if provider == "wikimedia":
+        return "wikimedia", None
+
     if provider == "mpt_openai":
         if not mpt_openai_image_ready():
             raise ImageGenerationUnavailable(
@@ -75,14 +90,11 @@ def _resolve_image_provider(
 
     if workflow_path and workflow_path.is_file():
         return "comfyui", workflow_path
-    if mpt_openai_image_ready():
-        return "mpt_openai", None
 
-    raise ImageGenerationUnavailable(
-        "No automatic image provider is ready. Configure a ComfyUI "
-        "API workflow or MoneyPrinterTurbo's OpenAI-compatible image "
-        "backend, or use HYBRID mode."
-    )
+    # Zero-config, free-first fallback. Paid OpenAI-compatible image
+    # generation is never selected implicitly; users must choose it
+    # explicitly so AUTO cannot create surprise charges.
+    return "wikimedia", None
 
 
 def _generate_mpt_candidate(
@@ -108,6 +120,41 @@ def _generate_mpt_candidate(
         return None
     source = Path(results[0].url)
     return source if source.is_file() else None
+
+
+def _generate_wikimedia_candidate(
+    *,
+    scene,
+    candidate_dir: Path,
+    attempt: int,
+):
+    query = (
+        str(getattr(scene, "search_query", "") or "").strip()
+        or scene.visual_description
+        or scene.narration
+    )
+    assets = search_wikimedia_images(
+        query,
+        limit=max(8, attempt + 4),
+        thumb_width=1920,
+    )
+    if not assets:
+        return None, None
+
+    index = min(
+        max(0, int(attempt) - 1),
+        len(assets) - 1,
+    )
+    asset = assets[index]
+    target = (
+        candidate_dir
+        / f"{scene.scene_id}_wikimedia_{attempt}.jpg"
+    )
+    downloaded = download_archive_image(
+        asset,
+        target,
+    )
+    return downloaded, asset
 
 
 def _generate_comfyui_candidate(
@@ -186,6 +233,10 @@ def generate_missing_scene_images(
         comfy_workflow_data = load_api_workflow(workflow_path)
 
     failures: list[str] = []
+    asset_sources = dict(
+        project.metadata.get("asset_sources")
+        or {}
+    )
     for scene in project.scenes:
         existing = (
             Path(scene.asset_path)
@@ -214,6 +265,7 @@ def generate_missing_scene_images(
         accepted = False
         scene.qc_notes = []
         for attempt in range(1, max_attempts + 1):
+            archive_asset = None
             if provider_name == "comfyui":
                 source = _generate_comfyui_candidate(
                     scene=scene,
@@ -223,6 +275,22 @@ def generate_missing_scene_images(
                     candidate_dir=candidate_dir,
                     attempt=attempt,
                 )
+            elif provider_name == "wikimedia":
+                try:
+                    (
+                        source,
+                        archive_asset,
+                    ) = _generate_wikimedia_candidate(
+                        scene=scene,
+                        candidate_dir=candidate_dir,
+                        attempt=attempt,
+                    )
+                except Exception as exc:
+                    scene.qc_notes.append(
+                        "archive search failed: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                    source = None
             else:
                 source = _generate_mpt_candidate(
                     scene=scene,
@@ -258,6 +326,12 @@ def generate_missing_scene_images(
                 if source.resolve() != target.resolve():
                     shutil.move(str(source), str(target))
                 scene.asset_path = str(target.resolve())
+                if archive_asset is not None:
+                    asset_sources[
+                        scene.scene_id
+                    ] = attribution_record(
+                        archive_asset
+                    )
                 accepted = True
                 break
 
@@ -274,6 +348,17 @@ def generate_missing_scene_images(
             failures.append(scene.scene_id)
 
     project.metadata["image_provider"] = provider_name
+    project.metadata["asset_sources"] = asset_sources
+    if asset_sources:
+        attribution_path = write_attribution_file(
+            asset_sources,
+            project_dir / "ATTRIBUTION.md",
+        )
+        project.metadata[
+            "attribution_file"
+        ] = str(
+            attribution_path.resolve()
+        )
     if workflow_path:
         project.metadata["comfyui_image_workflow"] = str(
             workflow_path.resolve()
