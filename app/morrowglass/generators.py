@@ -194,8 +194,6 @@ def generate_missing_scene_images(
         if (
             existing
             and existing.is_file()
-            and existing.suffix.lower()
-            in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
             and not overwrite
         ):
             continue
