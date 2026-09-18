@@ -79,7 +79,11 @@ def cmd_voice(args) -> int:
         args.project_dir,
         voice_name=args.voice or None,
         voice_rate=args.rate,
+        voice_volume=args.volume,
         kokoro_python=args.kokoro_python or None,
+        kokoro_en_python=args.kokoro_en_python or None,
+        kokoro_vi_python=args.kokoro_vi_python or None,
+        kokoro_vi_device=args.kokoro_vi_device,
     )
     project = MorrowglassProject.load(manifest)
     print(
@@ -395,7 +399,11 @@ def cmd_run(args) -> int:
             project_dir,
             voice_name=args.voice or None,
             voice_rate=args.rate,
+            voice_volume=args.volume,
             kokoro_python=args.kokoro_python or None,
+            kokoro_en_python=args.kokoro_en_python or None,
+            kokoro_vi_python=args.kokoro_vi_python or None,
+            kokoro_vi_device=args.kokoro_vi_device,
         )
         project = MorrowglassProject.load(
             manifest
@@ -501,6 +509,22 @@ def cmd_doctor(args) -> int:
             )
             or None
         ),
+        kokoro_en_python=(
+            getattr(
+                args,
+                "kokoro_en_python",
+                "",
+            )
+            or None
+        ),
+        kokoro_vi_python=(
+            getattr(
+                args,
+                "kokoro_vi_python",
+                "",
+            )
+            or None
+        ),
     )
     print("")
     print(
@@ -539,19 +563,52 @@ def _add_tts_options(parser) -> None:
     parser.add_argument(
         "--voice",
         default="",
+        help=(
+            "Examples: kokoro-en:am_michael, "
+            "kokoro-vi:manh_dung, or another MPT voice."
+        ),
     )
     parser.add_argument(
         "--rate",
         type=float,
         default=1.0,
+        help="Narration speed. Default: 1.0.",
+    )
+    parser.add_argument(
+        "--volume",
+        type=float,
+        default=1.0,
+        help="Narration volume multiplier. Default: 1.0.",
     )
     parser.add_argument(
         "--kokoro-python",
         default="",
         help=(
-            "Python executable from an existing "
-            "Kokoro KPipeline environment. Use with "
-            "voices such as kokoro-local:am_michael."
+            "Legacy local Kokoro Python path. "
+            "Prefer --kokoro-en-python / --kokoro-vi-python."
+        ),
+    )
+    parser.add_argument(
+        "--kokoro-en-python",
+        default="",
+        help=(
+            "Python executable for the English Kokoro environment."
+        ),
+    )
+    parser.add_argument(
+        "--kokoro-vi-python",
+        default="",
+        help=(
+            "Python executable for the Vietnamese Kokoro environment."
+        ),
+    )
+    parser.add_argument(
+        "--kokoro-vi-device",
+        choices=["cpu", "cuda"],
+        default="cpu",
+        help=(
+            "Vietnamese Kokoro inference device. "
+            "Use cpu on the current Iris Xe machine."
         ),
     )
 
@@ -780,6 +837,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor.add_argument(
         "--kokoro-python",
+        default="",
+    )
+    doctor.add_argument(
+        "--kokoro-en-python",
+        default="",
+    )
+    doctor.add_argument(
+        "--kokoro-vi-python",
         default="",
     )
     doctor.set_defaults(func=cmd_doctor)
