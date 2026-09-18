@@ -64,7 +64,7 @@ def _write_pcm16_wav(
         )
 
 
-def synthesize(
+def synthesize_english(
     *,
     text: str,
     output: Path,
@@ -109,22 +109,54 @@ def synthesize(
 
     if not chunks:
         raise RuntimeError(
-            "Kokoro produced no audio"
+            "English Kokoro produced no audio"
         )
 
-    combined = np.concatenate(chunks)
     _write_pcm16_wav(
         output,
-        combined,
+        np.concatenate(chunks),
+    )
+
+
+def synthesize_vietnamese(
+    *,
+    text: str,
+    output: Path,
+    voice: str,
+    device: str = "cpu",
+) -> None:
+    from kokoro_vietnamese import KokoroVietnamese
+
+    tts = KokoroVietnamese(
+        device=device,
+        voice=voice,
+    )
+    audio, _phonemes = tts.synthesize(
+        text
+    )
+    array = _to_numpy(audio)
+    if not array.size:
+        raise RuntimeError(
+            "Vietnamese Kokoro produced no audio"
+        )
+
+    _write_pcm16_wav(
+        output,
+        array,
     )
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate a WAV file with a "
-            "local Kokoro KPipeline install"
+            "Generate a WAV file with an existing "
+            "English or Vietnamese Kokoro environment"
         )
+    )
+    parser.add_argument(
+        "--engine",
+        choices=["english", "vietnamese"],
+        default="english",
     )
     parser.add_argument(
         "--text-file",
@@ -136,7 +168,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--voice",
-        default="am_michael",
+        required=True,
     )
     parser.add_argument(
         "--lang",
@@ -146,6 +178,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--speed",
         type=float,
         default=1.0,
+    )
+    parser.add_argument(
+        "--device",
+        default="cpu",
     )
     return parser
 
@@ -162,15 +198,25 @@ def main() -> int:
             "text file is empty"
         )
 
-    synthesize(
-        text=text,
-        output=Path(args.output),
-        voice=args.voice,
-        lang=args.lang,
-        speed=args.speed,
-    )
+    output = Path(args.output)
+    if args.engine == "vietnamese":
+        synthesize_vietnamese(
+            text=text,
+            output=output,
+            voice=args.voice,
+            device=args.device,
+        )
+    else:
+        synthesize_english(
+            text=text,
+            output=output,
+            voice=args.voice,
+            lang=args.lang,
+            speed=args.speed,
+        )
+
     print(
-        f"Kokoro audio: {args.output}"
+        f"Kokoro audio: {output}"
     )
     return 0
 
