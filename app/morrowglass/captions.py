@@ -71,7 +71,16 @@ def write_srt(cues: list[Cue], path: str | Path) -> Path:
         blocks.append(
             f"{index}\n{_format_timestamp(cue.start)} --> {_format_timestamp(cue.end)}\n{cue.text}"
         )
-    path.write_text("\n\n".join(blocks) + ("\n" if blocks else ""), encoding="utf-8")
+    # MoviePy's SRT parser flushes a cue on the blank-line separator.
+    # Always terminate the final cue with a full blank line so a one-cue
+    # caption file is not silently parsed as an empty subtitle list.
+    payload = "\n\n".join(blocks)
+    if blocks:
+        payload += "\n\n"
+    path.write_text(
+        payload,
+        encoding="utf-8",
+    )
     return path
 
 
