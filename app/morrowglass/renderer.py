@@ -8,7 +8,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from app.models.schema import VideoAspect, VideoFitMode, VideoParams
+from app.models.schema import VideoFitMode, VideoParams
 from app.services import video
 from app.utils import utils
 
