@@ -363,8 +363,8 @@ st.set_page_config(
 )
 st.title("Morrowglass AutoVideo")
 st.caption(
-    "Script → Scene Director → Kokoro → "
-    "Whisper → AI assets → edit → final MP4"
+    "Paste script → scene plan → Kokoro → Whisper → "
+    "free-first auto assets → edit → final MP4"
 )
 
 default_project = str(
@@ -395,6 +395,7 @@ stored_image_provider = str(
 )
 if stored_image_provider not in {
     "auto",
+    "wikimedia",
     "mpt_openai",
     "comfyui",
 }:
@@ -523,7 +524,7 @@ with st.sidebar:
                 project.asset_mode.value
             )
             if project
-            else 1
+            else 0
         ),
     )
     current_voice = (
@@ -757,6 +758,7 @@ with st.sidebar:
     st.subheader("Auto assets")
     image_provider_options = [
         "auto",
+        "wikimedia",
         "comfyui",
         "mpt_openai",
     ]
@@ -767,8 +769,9 @@ with st.sidebar:
             stored_image_provider
         ),
         help=(
-            "auto prefers a project ComfyUI "
-            "workflow, then falls back to MPT."
+            "auto is free-first: local ComfyUI when available, "
+            "otherwise Wikimedia Commons. Paid OpenAI-compatible "
+            "image generation is used only when selected explicitly."
         ),
     )
     comfyui_url = st.text_input(
