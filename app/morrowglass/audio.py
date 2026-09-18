@@ -4,6 +4,11 @@ import os
 from pathlib import Path
 import subprocess
 
+from .tts_profiles import (
+    default_kokoro_en_python,
+    default_kokoro_vi_python,
+)
+
 
 KOKORO_EN_PREFIX = "kokoro-en:"
 KOKORO_VI_PREFIX = "kokoro-vi:"
@@ -83,6 +88,11 @@ def _resolve_kokoro_python(
             "MORROWGLASS_KOKORO_EN_PYTHON"
         )
 
+    detected_default = (
+        default_kokoro_vi_python()
+        if engine == "vietnamese"
+        else default_kokoro_en_python()
+    )
     configured = str(
         value
         or os.getenv(
@@ -94,6 +104,7 @@ def _resolve_kokoro_python(
             "MORROWGLASS_KOKORO_PYTHON",
             "",
         )
+        or detected_default
     ).strip()
     if not configured:
         label = (
