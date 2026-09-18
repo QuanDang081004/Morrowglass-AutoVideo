@@ -68,7 +68,7 @@ Both profiles expose:
 - narration volume
 - preview generation in the WebUI
 
-English Kokoro uses its native speed option. Vietnamese Kokoro currently applies speed adjustment after synthesis with FFmpeg so the Vietnamese model API remains unchanged.
+English and Vietnamese Kokoro both use their native synthesis speed controls. Volume is applied as a lightweight FFmpeg post-process when the multiplier differs from 1.0.
 
 The WebUI stores the selected TTS settings in `project.json`, so each video project can keep its own voice profile.
 
