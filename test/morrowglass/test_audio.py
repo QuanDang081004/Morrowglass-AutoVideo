@@ -85,6 +85,30 @@ class AudioTests(unittest.TestCase):
             "manh_dung",
         )
 
+    def test_english_voice_list_contains_known_voices(self):
+        self.assertIn(
+            "am_michael",
+            audio.ENGLISH_KOKORO_VOICES,
+        )
+        self.assertIn(
+            "af_heart",
+            audio.ENGLISH_KOKORO_VOICES,
+        )
+        self.assertIn(
+            "bf_emma",
+            audio.ENGLISH_KOKORO_VOICES,
+        )
+        self.assertIn(
+            "bm_george",
+            audio.ENGLISH_KOKORO_VOICES,
+        )
+        self.assertGreaterEqual(
+            len(
+                audio.ENGLISH_KOKORO_VOICES
+            ),
+            20,
+        )
+
     def test_vietnamese_voice_list_contains_known_voice(self):
         self.assertIn(
             "manh_dung",
