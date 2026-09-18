@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 
 from app.morrowglass.assets import missing_scene_ids, resolve_assets
+from app.morrowglass.doctor import required_checks_pass, run_doctor
 from app.morrowglass.generators import ImageGenerationUnavailable
 from app.morrowglass.models import AssetMode, MorrowglassProject, VisualBible
 from app.morrowglass.pipeline import MorrowglassPipeline
@@ -166,6 +167,22 @@ def cmd_run(args) -> int:
     return 0
 
 
+def cmd_doctor(args) -> int:
+    checks = run_doctor()
+    print("")
+    print("Morrowglass environment check")
+    print("-" * 72)
+    for check in checks:
+        marker = "OK" if check.ok else ("OPTIONAL" if not check.required else "FAIL")
+        print(f"[{marker:8}] {check.name:12} {check.detail}")
+    print("-" * 72)
+    if required_checks_pass(checks):
+        print("Required components are ready.")
+        return 0
+    print("One or more required components need attention.")
+    return 2
+
+
 def _add_render_options(parser):
     parser.add_argument("--bgm", default="")
     parser.add_argument("--bgm-volume", type=float, default=0.12)
@@ -211,6 +228,9 @@ def build_parser() -> argparse.ArgumentParser:
     status = sub.add_parser("status", help="Check which scene assets are present")
     status.add_argument("--project-dir", required=True)
     status.set_defaults(func=cmd_status)
+
+    doctor = sub.add_parser("doctor", help="Check FFmpeg, Kokoro, Whisper, and optional AUTO providers")
+    doctor.set_defaults(func=cmd_doctor)
 
     render = sub.add_parser("render", help="Render timed scene assets into the final MP4")
     render.add_argument("--project-dir", required=True)
