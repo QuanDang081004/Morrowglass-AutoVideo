@@ -104,6 +104,8 @@ def cmd_render(args) -> int:
             font_size=args.font_size,
             subtitle_position=args.subtitle_position,
             fit_mode=args.fit_mode,
+        image_motion=args.image_motion,
+            image_motion=args.image_motion,
         )
     except FileNotFoundError as exc:
         print(str(exc))
@@ -178,6 +180,7 @@ def cmd_run(args) -> int:
         font_size=args.font_size,
         subtitle_position=args.subtitle_position,
         fit_mode=args.fit_mode,
+        image_motion=args.image_motion,
     )
     print(f"Final video: {final}")
     return 0
@@ -206,6 +209,7 @@ def _add_render_options(parser):
     parser.add_argument("--font-size", type=int, default=48)
     parser.add_argument("--subtitle-position", default="bottom")
     parser.add_argument("--fit-mode", choices=["cover", "contain"], default="cover")
+    parser.add_argument("--image-motion", choices=["slow_zoom", "none"], default="slow_zoom")
 
 
 def _add_image_options(parser):
