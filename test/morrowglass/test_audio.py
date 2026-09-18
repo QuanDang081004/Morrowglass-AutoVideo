@@ -55,10 +55,23 @@ class AudioTests(unittest.TestCase):
             )
 
     def test_local_kokoro_voice_helpers(self):
-        self.assertTrue(
-            audio.is_local_kokoro_voice(
+        self.assertEqual(
+            audio.local_kokoro_engine(
+                "kokoro-en:am_michael"
+            ),
+            "english",
+        )
+        self.assertEqual(
+            audio.local_kokoro_engine(
                 "kokoro-local:am_michael"
-            )
+            ),
+            "english",
+        )
+        self.assertEqual(
+            audio.local_kokoro_engine(
+                "kokoro-vi:manh_dung"
+            ),
+            "vietnamese",
         )
         self.assertFalse(
             audio.is_local_kokoro_voice(
@@ -67,9 +80,19 @@ class AudioTests(unittest.TestCase):
         )
         self.assertEqual(
             audio._local_kokoro_voice_id(
-                "kokoro-local:am_michael"
+                "kokoro-vi:manh_dung"
             ),
-            "am_michael",
+            "manh_dung",
+        )
+
+    def test_vietnamese_voice_list_contains_known_voice(self):
+        self.assertIn(
+            "manh_dung",
+            audio.VIETNAMESE_KOKORO_VOICES,
+        )
+        self.assertIn(
+            "diem_trinh",
+            audio.VIETNAMESE_KOKORO_VOICES,
         )
 
     def test_local_kokoro_records_audio_metadata(self):
@@ -86,7 +109,7 @@ class AudioTests(unittest.TestCase):
             ],
         )
         project.voice_name = (
-            "kokoro-local:am_michael"
+            "kokoro-en:am_michael"
         )
 
         with tempfile.TemporaryDirectory() as directory:
@@ -94,7 +117,9 @@ class AudioTests(unittest.TestCase):
             audio_dir = project_dir / "audio"
             audio_dir.mkdir()
             output = audio_dir / "narration.wav"
-            output.write_bytes(b"valid-enough-for-mocked-duration")
+            output.write_bytes(
+                b"valid-enough-for-mocked-duration"
+            )
 
             with (
                 patch(
@@ -110,8 +135,12 @@ class AudioTests(unittest.TestCase):
                 result, duration = audio.synthesize_narration(
                     project,
                     project_dir,
-                    voice_name="kokoro-local:am_michael",
-                    kokoro_python=r"C:\Kokoro\venv\Scripts\python.exe",
+                    voice_name="kokoro-en:am_michael",
+                    voice_rate=0.95,
+                    voice_volume=1.1,
+                    kokoro_en_python=(
+                        r"C:\KokoroEN\venv\Scripts\python.exe"
+                    ),
                 )
 
             self.assertEqual(result, output)
@@ -137,7 +166,8 @@ class AudioTests(unittest.TestCase):
                 FileNotFoundError
             ):
                 audio._resolve_kokoro_python(
-                    ""
+                    "",
+                    engine="vietnamese",
                 )
 
 
