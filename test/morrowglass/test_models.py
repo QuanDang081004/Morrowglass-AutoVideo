@@ -12,6 +12,39 @@ from app.morrowglass.models import (
 
 
 class ProjectModelTests(unittest.TestCase):
+    def test_vertical_aspect_retargets_resolution_and_prompt(self):
+        project = MorrowglassProject(
+            title="Vertical",
+            script="A scene.",
+            scenes=[
+                Scene(
+                    "scene_001",
+                    "A scene.",
+                    "visible scene",
+                    "historical scene",
+                )
+            ],
+        )
+        project.set_aspect(
+            "9:16"
+        )
+        self.assertEqual(
+            project.aspect,
+            "9:16",
+        )
+        self.assertEqual(
+            project.resolution,
+            (1080, 1920),
+        )
+        self.assertIn(
+            "vertical 9:16 composition",
+            project.visual_bible.style,
+        )
+        self.assertIn(
+            "vertical 9:16 composition",
+            project.scenes[0].image_prompt,
+        )
+
     def test_project_json_roundtrip(self):
         project = MorrowglassProject(
             title="History",
