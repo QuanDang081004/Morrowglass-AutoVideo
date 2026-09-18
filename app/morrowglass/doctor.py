@@ -3,12 +3,19 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 import requests
 
 from app.config import config
 from app.services import material, subtitle
 from app.utils import utils
+
+from .comfyui import (
+    ComfyUIClient,
+    default_image_workflow,
+    default_video_workflow,
+)
 
 
 @dataclass(slots=True)
@@ -21,7 +28,10 @@ class Check:
 
 def _check_kokoro(timeout: float = 3.0) -> Check:
     base_url = str(
-        config.kokoro.get("base_url", "http://127.0.0.1:8880/v1")
+        config.kokoro.get(
+            "base_url",
+            "http://127.0.0.1:8880/v1",
+        )
     ).strip().rstrip("/")
     api_key = str(
         config.kokoro.get("api_key", "") or ""
@@ -61,10 +71,59 @@ def _check_kokoro(timeout: float = 3.0) -> Check:
         )
 
 
-def run_doctor() -> list[Check]:
+def _check_comfyui(
+    project_dir: str | Path | None = None,
+) -> Check:
+    image_workflow = default_image_workflow(project_dir)
+    video_workflow = default_video_workflow(project_dir)
+    configured = bool(
+        (image_workflow and image_workflow.is_file())
+        or (video_workflow and video_workflow.is_file())
+        or os.getenv(
+            "MORROWGLASS_COMFYUI_URL",
+            "",
+        ).strip()
+    )
+    if not configured:
+        return Check(
+            "ComfyUI",
+            False,
+            "optional; no ComfyUI workflow configured",
+            required=False,
+        )
+
+    client = ComfyUIClient()
+    ready = client.ping()
+    workflow_bits = []
+    if image_workflow and image_workflow.is_file():
+        workflow_bits.append("image workflow")
+    if video_workflow and video_workflow.is_file():
+        workflow_bits.append("video workflow")
+    workflow_text = (
+        ", ".join(workflow_bits)
+        if workflow_bits
+        else "no workflow file"
+    )
+    return Check(
+        "ComfyUI",
+        ready,
+        (
+            f"reachable at {client.base_url}; {workflow_text}"
+            if ready
+            else f"not reachable at {client.base_url}; {workflow_text}"
+        ),
+        required=False,
+    )
+
+
+def run_doctor(
+    project_dir: str | Path | None = None,
+) -> list[Check]:
     python_ok = sys.version_info >= (3, 11)
     ffmpeg_ok = bool(utils.check_ffmpeg_ready())
-    image_ready = bool(material.is_openai_image_enabled())
+    mpt_image_ready = bool(
+        material.is_openai_image_enabled()
+    )
     vision_ready = bool(
         os.getenv(
             "MORROWGLASS_VISION_BASE_URL",
@@ -102,15 +161,15 @@ def run_doctor() -> list[Check]:
             ),
         ),
         _check_kokoro(),
+        _check_comfyui(project_dir),
         Check(
-            "Auto image",
-            image_ready,
+            "MPT image",
+            mpt_image_ready,
             (
                 "OpenAI-compatible image backend configured"
-                if image_ready
+                if mpt_image_ready
                 else (
-                    "not configured; HYBRID/manual prompts "
-                    "still work"
+                    "optional; ComfyUI/HYBRID can be used instead"
                 )
             ),
             required=False,
