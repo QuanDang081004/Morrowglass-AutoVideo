@@ -120,6 +120,7 @@ def _resolve_image_provider(
 def _generate_mpt_candidate(
     *,
     scene,
+    project: MorrowglassProject,
     images_dir: Path,
 ) -> Path | None:
     duration = (
@@ -133,7 +134,9 @@ def _generate_mpt_candidate(
             1,
             int(math.ceil(duration)),
         ),
-        video_aspect=VideoAspect.landscape,
+        video_aspect=VideoAspect(
+            project.aspect
+        ),
         save_dir=str(images_dir),
     )
     if not results:
@@ -322,6 +325,7 @@ def generate_missing_scene_images(
             else:
                 source = _generate_mpt_candidate(
                     scene=scene,
+                    project=project,
                     images_dir=candidate_dir,
                 )
 
