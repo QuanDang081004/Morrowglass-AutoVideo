@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import streamlit as st
@@ -10,6 +11,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from app.morrowglass.audio import (  # noqa: E402
+    VIETNAMESE_KOKORO_VOICES,
+    synthesize_narration,
+)
 from app.morrowglass.assets import (  # noqa: E402
     missing_scene_ids,
     resolve_assets,
@@ -169,7 +174,10 @@ def _ensure_audio_timeline(
     *,
     voice_name: str,
     voice_rate: float,
-    kokoro_python: str,
+    voice_volume: float,
+    kokoro_en_python: str,
+    kokoro_vi_python: str,
+    kokoro_vi_device: str,
 ) -> MorrowglassProject:
     audio_file = Path(
         str(
@@ -205,7 +213,10 @@ def _ensure_audio_timeline(
         project_dir,
         voice_name=voice_name or None,
         voice_rate=voice_rate,
-        kokoro_python=kokoro_python or None,
+        voice_volume=voice_volume,
+        kokoro_en_python=kokoro_en_python or None,
+        kokoro_vi_python=kokoro_vi_python or None,
+        kokoro_vi_device=kokoro_vi_device,
     )
 
 
@@ -263,7 +274,11 @@ def _save_ui_settings(
     *,
     asset_mode: str,
     voice_name: str,
-    kokoro_python: str,
+    voice_rate: float,
+    voice_volume: float,
+    kokoro_en_python: str,
+    kokoro_vi_python: str,
+    kokoro_vi_device: str,
     image_provider: str,
     comfyui_url: str,
     comfyui_image_workflow: str,
@@ -275,8 +290,20 @@ def _save_ui_settings(
     )
     project.voice_name = voice_name
     project.metadata[
-        "kokoro_python"
-    ] = kokoro_python
+        "voice_rate"
+    ] = float(voice_rate)
+    project.metadata[
+        "voice_volume"
+    ] = float(voice_volume)
+    project.metadata[
+        "kokoro_en_python"
+    ] = kokoro_en_python
+    project.metadata[
+        "kokoro_vi_python"
+    ] = kokoro_vi_python
+    project.metadata[
+        "kokoro_vi_device"
+    ] = kokoro_vi_device
     project.metadata[
         "preferred_image_provider"
     ] = image_provider
@@ -375,14 +402,44 @@ if not default_video_workflow_path:
             detected
         )
 
-default_kokoro_python = str(
+default_kokoro_en_python = str(
     stored.get(
+        "kokoro_en_python",
+        "",
+    )
+    or stored.get(
         "kokoro_python",
+        "",
+    )
+    or os.getenv(
+        "MORROWGLASS_KOKORO_EN_PYTHON",
         "",
     )
     or os.getenv(
         "MORROWGLASS_KOKORO_PYTHON",
         "",
+    )
+)
+default_kokoro_vi_python = str(
+    stored.get(
+        "kokoro_vi_python",
+        "",
+    )
+    or os.getenv(
+        "MORROWGLASS_KOKORO_VI_PYTHON",
+        "",
+    )
+)
+default_voice_rate = float(
+    stored.get(
+        "voice_rate",
+        1.0,
+    )
+)
+default_voice_volume = float(
+    stored.get(
+        "voice_volume",
+        1.0,
     )
 )
 
@@ -445,31 +502,128 @@ with st.sidebar:
             else 1
         ),
     )
-    voice_name = st.text_input(
-        "Voice",
-        value=(
-            project.voice_name
-            if project
-            else "kokoro-local:am_michael"
+    current_voice = (
+        project.voice_name
+        if project
+        else "kokoro-en:am_michael"
+    )
+    if current_voice.startswith("kokoro-vi:"):
+        default_tts_engine = "Kokoro Vietnamese"
+    elif (
+        current_voice.startswith("kokoro-en:")
+        or current_voice.startswith("kokoro-local:")
+    ):
+        default_tts_engine = "Kokoro English"
+    else:
+        default_tts_engine = "MPT / other"
+
+    tts_engines = [
+        "Kokoro English",
+        "Kokoro Vietnamese",
+        "MPT / other",
+    ]
+    tts_engine = st.selectbox(
+        "TTS engine",
+        options=tts_engines,
+        index=tts_engines.index(
+            default_tts_engine
         ),
     )
-    kokoro_python = st.text_input(
-        "Local Kokoro Python",
-        value=default_kokoro_python,
+
+    if tts_engine == "Kokoro Vietnamese":
+        current_vi_voice = (
+            current_voice.split(":", 1)[1]
+            if current_voice.startswith("kokoro-vi:")
+            else "manh_dung"
+        )
+        if current_vi_voice not in VIETNAMESE_KOKORO_VOICES:
+            current_vi_voice = "manh_dung"
+        vi_voice = st.selectbox(
+            "Vietnamese voice",
+            options=list(
+                VIETNAMESE_KOKORO_VOICES
+            ),
+            index=list(
+                VIETNAMESE_KOKORO_VOICES
+            ).index(
+                current_vi_voice
+            ),
+        )
+        voice_name = f"kokoro-vi:{vi_voice}"
+    elif tts_engine == "Kokoro English":
+        current_en_voice = (
+            current_voice.split(":", 1)[1]
+            if (
+                current_voice.startswith("kokoro-en:")
+                or current_voice.startswith("kokoro-local:")
+            )
+            else "am_michael"
+        )
+        en_voice = st.text_input(
+            "English voice",
+            value=current_en_voice,
+            help=(
+                "Use a voice available in your English "
+                "Kokoro installation, e.g. am_michael."
+            ),
+        )
+        voice_name = f"kokoro-en:{en_voice.strip()}"
+    else:
+        voice_name = st.text_input(
+            "MPT voice",
+            value=(
+                current_voice
+                if default_tts_engine == "MPT / other"
+                else ""
+            ),
+        )
+
+    kokoro_en_python = st.text_input(
+        "English Kokoro Python",
+        value=default_kokoro_en_python,
         placeholder=(
             r"C:\MorrowglassTTS\venv\Scripts\python.exe"
         ),
+    )
+    kokoro_vi_python = st.text_input(
+        "Vietnamese Kokoro Python",
+        value=default_kokoro_vi_python,
+        placeholder=(
+            r"D:\Kokoro-Vietnamese\venv\Scripts\python.exe"
+        ),
+    )
+    kokoro_vi_device = st.selectbox(
+        "Vietnamese Kokoro device",
+        options=["cpu", "cuda"],
+        index=0,
         help=(
-            "Only needed for voices beginning with "
-            "kokoro-local:. Point this to the python.exe "
-            "inside your existing Kokoro environment."
+            "Use cpu on the current Intel Iris Xe machine."
         ),
     )
     voice_rate = st.slider(
         "Voice speed",
-        min_value=0.8,
-        max_value=1.2,
-        value=1.0,
+        min_value=0.75,
+        max_value=1.25,
+        value=min(
+            1.25,
+            max(
+                0.75,
+                default_voice_rate,
+            ),
+        ),
+        step=0.05,
+    )
+    voice_volume = st.slider(
+        "Voice volume",
+        min_value=0.50,
+        max_value=1.50,
+        value=min(
+            1.50,
+            max(
+                0.50,
+                default_voice_volume,
+            ),
+        ),
         step=0.05,
     )
 
@@ -660,7 +814,11 @@ try:
                 manifest,
                 asset_mode=asset_mode_value,
                 voice_name=voice_name,
-                kokoro_python=kokoro_python,
+                voice_rate=voice_rate,
+                voice_volume=voice_volume,
+                kokoro_en_python=kokoro_en_python,
+                kokoro_vi_python=kokoro_vi_python,
+                kokoro_vi_device=kokoro_vi_device,
                 image_provider=image_provider,
                 comfyui_url=comfyui_url,
                 comfyui_image_workflow=(
@@ -688,7 +846,11 @@ try:
                 manifest,
                 asset_mode=asset_mode_value,
                 voice_name=voice_name,
-                kokoro_python=kokoro_python,
+                voice_rate=voice_rate,
+                voice_volume=voice_volume,
+                kokoro_en_python=kokoro_en_python,
+                kokoro_vi_python=kokoro_vi_python,
+                kokoro_vi_device=kokoro_vi_device,
                 image_provider=image_provider,
                 comfyui_url=comfyui_url,
                 comfyui_image_workflow=(
@@ -713,10 +875,16 @@ try:
                         or None
                     ),
                     voice_rate=voice_rate,
-                    kokoro_python=(
-                        kokoro_python
+                    voice_volume=voice_volume,
+                    kokoro_en_python=(
+                        kokoro_en_python
                         or None
                     ),
+                    kokoro_vi_python=(
+                        kokoro_vi_python
+                        or None
+                    ),
+                    kokoro_vi_device=kokoro_vi_device,
                 )
             st.success(
                 "Narration and scene "
@@ -735,7 +903,11 @@ try:
                 manifest,
                 asset_mode=asset_mode_value,
                 voice_name=voice_name,
-                kokoro_python=kokoro_python,
+                voice_rate=voice_rate,
+                voice_volume=voice_volume,
+                kokoro_en_python=kokoro_en_python,
+                kokoro_vi_python=kokoro_vi_python,
+                kokoro_vi_device=kokoro_vi_device,
                 image_provider=image_provider,
                 comfyui_url=comfyui_url,
                 comfyui_image_workflow=(
@@ -817,7 +989,11 @@ try:
                 manifest,
                 asset_mode=asset_mode_value,
                 voice_name=voice_name,
-                kokoro_python=kokoro_python,
+                voice_rate=voice_rate,
+                voice_volume=voice_volume,
+                kokoro_en_python=kokoro_en_python,
+                kokoro_vi_python=kokoro_vi_python,
+                kokoro_vi_device=kokoro_vi_device,
                 image_provider=image_provider,
                 comfyui_url=comfyui_url,
                 comfyui_image_workflow=(
@@ -871,7 +1047,11 @@ try:
                             asset_mode_value
                         ),
                         voice_name=voice_name,
-                        kokoro_python=kokoro_python,
+                        voice_rate=voice_rate,
+                        voice_volume=voice_volume,
+                        kokoro_en_python=kokoro_en_python,
+                        kokoro_vi_python=kokoro_vi_python,
+                        kokoro_vi_device=kokoro_vi_device,
                         image_provider=(
                             image_provider
                         ),
@@ -928,7 +1108,11 @@ try:
                             asset_mode_value
                         ),
                         voice_name=voice_name,
-                        kokoro_python=kokoro_python,
+                        voice_rate=voice_rate,
+                        voice_volume=voice_volume,
+                        kokoro_en_python=kokoro_en_python,
+                        kokoro_vi_python=kokoro_vi_python,
+                        kokoro_vi_device=kokoro_vi_device,
                         image_provider=(
                             image_provider
                         ),
@@ -955,7 +1139,10 @@ try:
                     project_dir,
                     voice_name=voice_name,
                     voice_rate=voice_rate,
-                    kokoro_python=kokoro_python,
+                    voice_volume=voice_volume,
+                    kokoro_en_python=kokoro_en_python,
+                    kokoro_vi_python=kokoro_vi_python,
+                    kokoro_vi_device=kokoro_vi_device,
                 )
 
                 missing = _pipeline(
