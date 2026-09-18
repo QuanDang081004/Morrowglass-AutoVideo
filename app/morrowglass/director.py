@@ -70,6 +70,81 @@ def split_script(script: str, target_words: int = 24) -> list[str]:
     return scenes
 
 
+_SEARCH_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "been", "but",
+    "by", "for", "from", "had", "has", "have", "he", "her",
+    "his", "in", "into", "is", "it", "its", "of", "on", "or",
+    "she", "that", "the", "their", "them", "they", "this", "to",
+    "was", "were", "with", "would", "according", "story", "said",
+}
+
+
+def _fallback_search_query(
+    narration: str,
+    bible: VisualBible,
+) -> str:
+    tokens = re.findall(
+        r"[A-Za-z0-9][A-Za-z0-9'-]*",
+        narration or "",
+    )
+    content: list[str] = []
+    for token in tokens:
+        lower = token.lower()
+        if (
+            lower in _SEARCH_STOPWORDS
+            or len(lower) < 3
+        ):
+            continue
+        if lower not in {
+            value.lower()
+            for value in content
+        }:
+            content.append(token)
+        if len(content) >= 7:
+            break
+
+    prefix = [
+        value
+        for value in (
+            bible.location.strip(),
+            bible.period.strip(),
+        )
+        if value
+    ]
+    return " ".join(prefix + content).strip()
+
+
+def _fallback_visual_description(
+    narration: str,
+    bible: VisualBible,
+) -> str:
+    visible = re.sub(
+        r"^(according to (the )?story,?\s*|"
+        r"it was said that\s*|"
+        r"legend says that\s*)",
+        "",
+        narration.strip(),
+        flags=re.IGNORECASE,
+    )
+    context = ", ".join(
+        value
+        for value in (
+            bible.period.strip(),
+            bible.location.strip(),
+        )
+        if value
+    )
+    if context:
+        return (
+            f"Literal historical documentary reconstruction in {context}: "
+            f"{visible}"
+        )
+    return (
+        "Literal historical documentary reconstruction showing: "
+        f"{visible}"
+    )
+
+
 def _prompt_for_scene(
     narration: str,
     bible: VisualBible,
@@ -125,21 +200,37 @@ class SceneDirector:
                 round(target_scene_seconds * words_per_second),
             )
             chunks = split_script(script, target_words=target_words)
-            scenes = [
-                Scene(
-                    scene_id=f"scene_{index:03d}",
-                    narration=chunk,
-                    visual_description=chunk,
-                    image_prompt=_prompt_for_scene(chunk, bible),
-                    motion_prompt=(
-                        "subtle cinematic camera movement, natural human motion, "
-                        "no morphing"
-                    ),
-                    asset_type=AssetType.IMAGE,
-                    historical_constraints=list(bible.historical_constraints),
+            scenes = []
+            for index, chunk in enumerate(chunks, 1):
+                visual = _fallback_visual_description(
+                    chunk,
+                    bible,
                 )
-                for index, chunk in enumerate(chunks, 1)
-            ]
+                search_query = _fallback_search_query(
+                    chunk,
+                    bible,
+                )
+                scenes.append(
+                    Scene(
+                        scene_id=f"scene_{index:03d}",
+                        narration=chunk,
+                        visual_description=visual,
+                        image_prompt=_prompt_for_scene(
+                            chunk,
+                            bible,
+                            visual,
+                        ),
+                        search_query=search_query,
+                        motion_prompt=(
+                            "subtle cinematic camera movement, "
+                            "natural human motion, no morphing"
+                        ),
+                        asset_type=AssetType.IMAGE,
+                        historical_constraints=list(
+                            bible.historical_constraints
+                        ),
+                    )
+                )
 
         return MorrowglassProject(
             title=title,
@@ -165,6 +256,7 @@ Return ONLY a JSON array. Each object must contain:
 - narration: exact contiguous excerpt from the supplied script
 - visual_description: concrete visible action/place/people matching that narration
 - image_prompt: detailed photorealistic 16:9 generation prompt consistent with the style bible
+- search_query: short concrete 3-8 word query for archive/stock search; visible nouns/actions only
 - motion_prompt: short image-to-video motion prompt, no new story facts
 - asset_type: one of image, image_to_video, video, stock, manual
 - historical_constraints: string array
@@ -219,6 +311,16 @@ SCRIPT:
                     narration=narration,
                     visual_description=visual,
                     image_prompt=prompt_text,
+                    search_query=(
+                        str(
+                            item.get("search_query")
+                            or ""
+                        ).strip()
+                        or _fallback_search_query(
+                            narration,
+                            bible,
+                        )
+                    ),
                     motion_prompt=str(
                         item.get("motion_prompt") or ""
                     ).strip(),
