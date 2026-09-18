@@ -165,3 +165,5 @@ The fork contains an upstream CI workflow, but GitHub Actions may need to be ena
 3. optionally add a direct ComfyUI workflow adapter (without an OpenAI-compatible gateway)
 4. optionally add scene-specific AI video / image-to-video providers
 5. harden cache/resume behavior after real long-video testing
+
+<!-- CI trigger marker: Actions enabled on fork -->
