@@ -14,6 +14,7 @@ from .comfyui import (
     default_video_workflow,
     load_api_workflow,
     prepare_workflow,
+    VIDEO_SUFFIXES,
 )
 from .models import AssetType, MorrowglassProject
 from .qc import evaluate_scene_image
@@ -387,7 +388,12 @@ def generate_motion_scene_videos(
                 timeout=timeout,
                 prefix=scene.scene_id,
             )
-            suffix = candidate.suffix.lower() or ".mp4"
+            suffix = candidate.suffix.lower()
+            if suffix not in VIDEO_SUFFIXES:
+                raise ValueError(
+                    "ComfyUI video workflow did not produce "
+                    f"a video file: {candidate.name}"
+                )
             target = videos_dir / f"{scene.scene_id}{suffix}"
             if target.exists():
                 target.unlink()
