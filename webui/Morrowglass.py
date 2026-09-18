@@ -627,6 +627,78 @@ with st.sidebar:
         step=0.05,
     )
 
+    preview_default = (
+        "Ngày xưa, có những câu chuyện lịch sử "
+        "khiến người ta phải nhìn lại quá khứ."
+        if tts_engine == "Kokoro Vietnamese"
+        else (
+            "Somewhere beyond the village, "
+            "a forgotten story is waiting to be told."
+        )
+    )
+    preview_text = st.text_area(
+        "Voice preview text",
+        value=preview_default,
+        height=90,
+    )
+    if st.button(
+        "▶ Preview voice",
+        use_container_width=True,
+    ):
+        if not preview_text.strip():
+            st.warning(
+                "Enter preview text first."
+            )
+        else:
+            try:
+                with st.spinner(
+                    "Generating voice preview..."
+                ):
+                    with tempfile.TemporaryDirectory() as directory:
+                        preview_project = MorrowglassProject(
+                            title="Voice Preview",
+                            script=preview_text.strip(),
+                            scenes=[],
+                            voice_name=voice_name,
+                        )
+                        preview_audio, _duration = (
+                            synthesize_narration(
+                                preview_project,
+                                directory,
+                                voice_name=voice_name,
+                                voice_rate=voice_rate,
+                                voice_volume=voice_volume,
+                                kokoro_en_python=(
+                                    kokoro_en_python
+                                    or None
+                                ),
+                                kokoro_vi_python=(
+                                    kokoro_vi_python
+                                    or None
+                                ),
+                                kokoro_vi_device=(
+                                    kokoro_vi_device
+                                ),
+                            )
+                        )
+                        audio_bytes = (
+                            preview_audio.read_bytes()
+                        )
+                        audio_format = (
+                            "audio/wav"
+                            if preview_audio.suffix.lower()
+                            == ".wav"
+                            else "audio/mpeg"
+                        )
+                st.audio(
+                    audio_bytes,
+                    format=audio_format,
+                )
+            except Exception as exc:
+                st.error(
+                    f"Voice preview failed: {exc}"
+                )
+
     st.divider()
     st.subheader("Auto assets")
     image_provider_options = [
