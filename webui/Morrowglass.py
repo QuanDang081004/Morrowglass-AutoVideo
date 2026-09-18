@@ -38,6 +38,7 @@ from app.morrowglass.models import (  # noqa: E402
 from app.morrowglass.pipeline import (  # noqa: E402
     MorrowglassPipeline,
 )
+from app.morrowglass.timeline import TIMELINE_VERSION  # noqa: E402
 from app.morrowglass.tts_profiles import (  # noqa: E402
     default_kokoro_en_python as detect_kokoro_en_python,
     default_kokoro_vi_python as detect_kokoro_vi_python,
@@ -227,6 +228,10 @@ def _ensure_audio_timeline(
             "tts_fingerprint"
         )
         == expected_fingerprint
+        and project.metadata.get(
+            "timeline_version"
+        )
+        == TIMELINE_VERSION
         and all(
             scene.start is not None
             and scene.end is not None
