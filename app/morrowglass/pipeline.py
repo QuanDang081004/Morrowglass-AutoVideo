@@ -90,12 +90,14 @@ class MorrowglassPipeline:
         *,
         voice_name: str | None = None,
         voice_rate: float = 1.0,
+        kokoro_python: str | Path | None = None,
     ) -> MorrowglassProject:
         audio_file, duration = synthesize_narration(
             project,
             project_dir,
             voice_name=voice_name,
             voice_rate=voice_rate,
+            kokoro_python=kokoro_python,
         )
         words_srt = transcribe_word_timing(
             project,
