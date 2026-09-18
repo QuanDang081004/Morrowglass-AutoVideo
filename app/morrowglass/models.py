@@ -66,7 +66,7 @@ class MorrowglassProject:
     scenes: list[Scene]
     visual_bible: VisualBible = field(default_factory=VisualBible)
     asset_mode: AssetMode = AssetMode.HYBRID
-    voice_name: str = "kokoro:am_michael"
+    voice_name: str = "kokoro-en:am_michael"
     aspect: str = "16:9"
     resolution: tuple[int, int] = (1920, 1080)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -101,7 +101,7 @@ class MorrowglassProject:
             scenes=scenes,
             visual_bible=bible,
             asset_mode=AssetMode(raw.get("asset_mode", AssetMode.HYBRID.value)),
-            voice_name=raw.get("voice_name", "kokoro:am_michael"),
+            voice_name=raw.get("voice_name", "kokoro-en:am_michael"),
             aspect=raw.get("aspect", "16:9"),
             resolution=(int(resolution[0]), int(resolution[1])),
             metadata=raw.get("metadata") or {},
