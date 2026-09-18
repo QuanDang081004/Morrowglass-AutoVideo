@@ -10,51 +10,87 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.morrowglass.assets import missing_scene_ids, resolve_assets  # noqa: E402
+from app.morrowglass.assets import (  # noqa: E402
+    missing_scene_ids,
+    resolve_assets,
+)
+from app.morrowglass.comfyui import (  # noqa: E402
+    default_base_url,
+    default_image_workflow,
+    default_video_workflow,
+)
 from app.morrowglass.generators import (  # noqa: E402
     ImageGenerationUnavailable,
+    VideoGenerationUnavailable,
 )
 from app.morrowglass.models import (  # noqa: E402
     AssetMode,
     MorrowglassProject,
     VisualBible,
 )
-from app.morrowglass.pipeline import MorrowglassPipeline  # noqa: E402
+from app.morrowglass.pipeline import (  # noqa: E402
+    MorrowglassPipeline,
+)
 from app.services import llm  # noqa: E402
 
 
-IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
-VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm"}
+IMAGE_EXTS = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".bmp",
+}
+VIDEO_EXTS = {
+    ".mp4",
+    ".mov",
+    ".mkv",
+    ".webm",
+    ".gif",
+}
 
 
 def _llm_call(prompt: str) -> str:
     return llm._generate_response(prompt)
 
 
-def _pipeline(use_llm: bool = True) -> MorrowglassPipeline:
+def _pipeline(
+    use_llm: bool = True,
+) -> MorrowglassPipeline:
     return MorrowglassPipeline(
         llm_call=_llm_call if use_llm else None
     )
 
 
-def _manifest(project_dir: Path) -> Path:
+def _manifest(
+    project_dir: Path,
+) -> Path:
     return project_dir / "project.json"
 
 
-def _load_project(project_dir: Path) -> MorrowglassProject | None:
+def _load_project(
+    project_dir: Path,
+) -> MorrowglassProject | None:
     manifest = _manifest(project_dir)
     if not manifest.is_file():
         return None
     return MorrowglassProject.load(manifest)
 
 
-def _project_rows(project: MorrowglassProject) -> list[dict]:
+def _project_rows(
+    project: MorrowglassProject,
+) -> list[dict]:
     rows = []
     for scene in project.scenes:
-        asset = Path(scene.asset_path).name if scene.asset_path else ""
+        asset = (
+            Path(scene.asset_path).name
+            if scene.asset_path
+            else ""
+        )
         rows.append(
             {
                 "scene": scene.scene_id,
+                "type": scene.asset_type.value,
                 "start": (
                     round(scene.start, 2)
                     if scene.start is not None
@@ -78,12 +114,20 @@ def _project_rows(project: MorrowglassProject) -> list[dict]:
     return rows
 
 
-def _delete_scene_assets(project_dir: Path, scene_id: str) -> None:
-    for folder_name in ("images", "videos"):
+def _delete_scene_assets(
+    project_dir: Path,
+    scene_id: str,
+) -> None:
+    for folder_name in (
+        "images",
+        "videos",
+    ):
         folder = project_dir / folder_name
         if not folder.exists():
             continue
-        for candidate in folder.glob(f"{scene_id}.*"):
+        for candidate in folder.glob(
+            f"{scene_id}.*"
+        ):
             if candidate.is_file():
                 candidate.unlink()
 
@@ -93,18 +137,27 @@ def _save_uploaded_asset(
     scene_id: str,
     uploaded,
 ) -> Path:
-    suffix = Path(uploaded.name).suffix.lower()
+    suffix = Path(
+        uploaded.name
+    ).suffix.lower()
     if suffix in IMAGE_EXTS:
         folder = project_dir / "images"
     elif suffix in VIDEO_EXTS:
         folder = project_dir / "videos"
     else:
         raise ValueError(
-            "Use PNG/JPG/WEBP or MP4/MOV/MKV/WEBM."
+            "Use PNG/JPG/WEBP/BMP or "
+            "MP4/MOV/MKV/WEBM/GIF."
         )
 
-    _delete_scene_assets(project_dir, scene_id)
-    folder.mkdir(parents=True, exist_ok=True)
+    _delete_scene_assets(
+        project_dir,
+        scene_id,
+    )
+    folder.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
     target = folder / f"{scene_id}{suffix}"
     target.write_bytes(uploaded.getvalue())
     return target
@@ -117,21 +170,36 @@ def _ensure_audio_timeline(
     voice_name: str,
     voice_rate: float,
 ) -> MorrowglassProject:
-    audio_file = Path(str(project.metadata.get("audio_file") or ""))
+    audio_file = Path(
+        str(
+            project.metadata.get(
+                "audio_file"
+            )
+            or ""
+        )
+    )
     timing_file = Path(
-        str(project.metadata.get("word_subtitle_file") or "")
+        str(
+            project.metadata.get(
+                "word_subtitle_file"
+            )
+            or ""
+        )
     )
     if (
         audio_file.is_file()
         and timing_file.is_file()
         and all(
-            scene.start is not None and scene.end is not None
+            scene.start is not None
+            and scene.end is not None
             for scene in project.scenes
         )
     ):
         return project
 
-    return _pipeline(False).build_audio_timeline(
+    return _pipeline(
+        False
+    ).build_audio_timeline(
         project,
         project_dir,
         voice_name=voice_name or None,
@@ -146,14 +214,79 @@ def _auto_images(
     attempts: int,
     min_qc_score: float,
     semantic_qc: bool,
+    provider: str,
+    comfyui_url: str,
+    comfyui_image_workflow: str,
 ) -> list[str]:
-    return _pipeline(False).auto_generate_images(
+    return _pipeline(
+        False
+    ).auto_generate_images(
         project,
         project_dir,
         semantic_qc=semantic_qc,
         min_qc_score=min_qc_score,
         max_attempts=attempts,
+        provider=provider,
+        comfyui_url=comfyui_url or None,
+        comfyui_workflow=(
+            comfyui_image_workflow
+            or None
+        ),
     )
+
+
+def _auto_videos(
+    project: MorrowglassProject,
+    project_dir: Path,
+    *,
+    comfyui_url: str,
+    comfyui_video_workflow: str,
+) -> list[str]:
+    return _pipeline(
+        False
+    ).auto_generate_videos(
+        project,
+        project_dir,
+        comfyui_url=comfyui_url or None,
+        comfyui_workflow=(
+            comfyui_video_workflow
+            or None
+        ),
+    )
+
+
+def _save_ui_settings(
+    project: MorrowglassProject,
+    manifest: Path,
+    *,
+    asset_mode: str,
+    voice_name: str,
+    image_provider: str,
+    comfyui_url: str,
+    comfyui_image_workflow: str,
+    comfyui_video_workflow: str,
+    auto_videos: bool,
+) -> None:
+    project.asset_mode = AssetMode(
+        asset_mode
+    )
+    project.voice_name = voice_name
+    project.metadata[
+        "preferred_image_provider"
+    ] = image_provider
+    project.metadata[
+        "preferred_comfyui_url"
+    ] = comfyui_url
+    project.metadata[
+        "preferred_comfyui_image_workflow"
+    ] = comfyui_image_workflow
+    project.metadata[
+        "preferred_comfyui_video_workflow"
+    ] = comfyui_video_workflow
+    project.metadata[
+        "auto_videos"
+    ] = bool(auto_videos)
+    project.save(manifest)
 
 
 st.set_page_config(
@@ -163,24 +296,96 @@ st.set_page_config(
 )
 st.title("Morrowglass AutoVideo")
 st.caption(
-    "Script → scenes → Kokoro → Whisper timing → "
-    "scene assets → subtitles/BGM → final MP4"
+    "Script → Scene Director → Kokoro → "
+    "Whisper → AI assets → edit → final MP4"
 )
 
 default_project = str(
-    ROOT / "storage" / "morrowglass" / "video-001"
+    ROOT
+    / "storage"
+    / "morrowglass"
+    / "video-001"
 )
 project_dir = Path(
-    st.text_input("Project folder", value=default_project)
+    st.text_input(
+        "Project folder",
+        value=default_project,
+    )
 ).expanduser()
 manifest = _manifest(project_dir)
 project = _load_project(project_dir)
+
+stored = (
+    project.metadata
+    if project
+    else {}
+)
+stored_image_provider = str(
+    stored.get(
+        "preferred_image_provider",
+        "auto",
+    )
+)
+if stored_image_provider not in {
+    "auto",
+    "mpt_openai",
+    "comfyui",
+}:
+    stored_image_provider = "auto"
+
+default_image_workflow_path = (
+    str(
+        stored.get(
+            "preferred_comfyui_image_workflow",
+            "",
+        )
+        or ""
+    )
+)
+if not default_image_workflow_path:
+    detected = default_image_workflow(
+        project_dir
+    )
+    if detected:
+        default_image_workflow_path = str(
+            detected
+        )
+
+default_video_workflow_path = (
+    str(
+        stored.get(
+            "preferred_comfyui_video_workflow",
+            "",
+        )
+        or ""
+    )
+)
+if not default_video_workflow_path:
+    detected = default_video_workflow(
+        project_dir
+    )
+    if detected:
+        default_video_workflow_path = str(
+            detected
+        )
+
+default_comfyui_url = str(
+    stored.get(
+        "preferred_comfyui_url",
+        "",
+    )
+    or default_base_url()
+)
 
 with st.sidebar:
     st.header("Project settings")
     title = st.text_input(
         "Video title",
-        value=project.title if project else "Morrowglass Video",
+        value=(
+            project.title
+            if project
+            else "Morrowglass Video"
+        ),
     )
     period = st.text_input(
         "Historical period",
@@ -188,6 +393,10 @@ with st.sidebar:
             project.visual_bible.period
             if project
             else ""
+        ),
+        help=(
+            "Optional. Leave blank and "
+            "the Scene Director will infer it."
         ),
     )
     location = st.text_input(
@@ -197,12 +406,22 @@ with st.sidebar:
             if project
             else ""
         ),
+        help=(
+            "Optional. Leave blank and "
+            "the Scene Director will infer it."
+        ),
     )
     asset_mode_value = st.selectbox(
         "Asset mode",
-        options=[mode.value for mode in AssetMode],
+        options=[
+            mode.value
+            for mode in AssetMode
+        ],
         index=(
-            [mode.value for mode in AssetMode].index(
+            [
+                mode.value
+                for mode in AssetMode
+            ].index(
                 project.asset_mode.value
             )
             if project
@@ -226,9 +445,67 @@ with st.sidebar:
     )
 
     st.divider()
-    st.subheader("Auto image QC")
+    st.subheader("Auto assets")
+    image_provider_options = [
+        "auto",
+        "comfyui",
+        "mpt_openai",
+    ]
+    image_provider = st.selectbox(
+        "Image provider",
+        options=image_provider_options,
+        index=image_provider_options.index(
+            stored_image_provider
+        ),
+        help=(
+            "auto prefers a project ComfyUI "
+            "workflow, then falls back to MPT."
+        ),
+    )
+    comfyui_url = st.text_input(
+        "ComfyUI URL",
+        value=default_comfyui_url,
+    )
+    comfyui_image_workflow = st.text_input(
+        "Image workflow (API JSON)",
+        value=default_image_workflow_path,
+        placeholder=(
+            str(
+                project_dir
+                / "workflows"
+                / "image.json"
+            )
+        ),
+    )
+    comfyui_video_workflow = st.text_input(
+        "Video workflow (API JSON)",
+        value=default_video_workflow_path,
+        placeholder=(
+            str(
+                project_dir
+                / "workflows"
+                / "video.json"
+            )
+        ),
+    )
+    auto_videos = st.checkbox(
+        "Animate motion scenes with ComfyUI",
+        value=bool(
+            stored.get(
+                "auto_videos",
+                False,
+            )
+        ),
+        help=(
+            "Only scenes marked image_to_video/"
+            "video by the Scene Director are animated."
+        ),
+    )
+
+    st.divider()
+    st.subheader("Asset QC")
     image_attempts = st.slider(
-        "Attempts per scene",
+        "Image attempts per scene",
         min_value=1,
         max_value=4,
         value=2,
@@ -244,14 +521,16 @@ with st.sidebar:
         value=True,
     )
     st.caption(
-        "Vision QC is optional. Configure "
-        "MORROWGLASS_VISION_BASE_URL and "
-        "MORROWGLASS_VISION_MODEL to enable it."
+        "Without a vision model, technical "
+        "image QC still runs."
     )
 
     st.divider()
     st.subheader("Render")
-    bgm_path = st.text_input("Optional BGM file", value="")
+    bgm_path = st.text_input(
+        "Optional BGM file",
+        value="",
+    )
     bgm_volume = st.slider(
         "BGM volume",
         min_value=0.0,
@@ -267,20 +546,30 @@ with st.sidebar:
     )
     image_motion = st.selectbox(
         "Still-image motion",
-        options=["slow_zoom", "none"],
+        options=[
+            "slow_zoom",
+            "none",
+        ],
         index=0,
         help=(
-            "slow_zoom adds subtle documentary-style Ken Burns motion "
-            "without changing scene timing."
+            "slow_zoom adds subtle "
+            "documentary-style motion."
         ),
     )
 
-script_default = project.script if project else ""
+script_default = (
+    project.script
+    if project
+    else ""
+)
 script = st.text_area(
     "Final narration script",
     value=script_default,
     height=320,
-    placeholder="Paste the finished English history script here...",
+    placeholder=(
+        "Paste the finished English "
+        "history script here..."
+    ),
 )
 
 action_cols = st.columns(5)
@@ -292,8 +581,8 @@ voice_clicked = action_cols[1].button(
     "2. Voice + timing",
     use_container_width=True,
 )
-images_clicked = action_cols[2].button(
-    "3. Auto images",
+assets_clicked = action_cols[2].button(
+    "3. Auto assets",
     use_container_width=True,
 )
 render_clicked = action_cols[3].button(
@@ -311,12 +600,20 @@ try:
         if not script.strip():
             st.error("Paste a script first.")
         else:
-            project_dir.mkdir(parents=True, exist_ok=True)
-            (project_dir / "script.txt").write_text(
+            project_dir.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+            (
+                project_dir
+                / "script.txt"
+            ).write_text(
                 script.strip() + "\n",
                 encoding="utf-8",
             )
-            project = _pipeline(True).plan_project(
+            project = _pipeline(
+                True
+            ).plan_project(
                 script,
                 project_dir,
                 title=title,
@@ -324,91 +621,256 @@ try:
                     period=period,
                     location=location,
                 ),
-                asset_mode=AssetMode(asset_mode_value),
+                asset_mode=AssetMode(
+                    asset_mode_value
+                ),
                 use_llm=True,
             )
-            project.voice_name = voice_name
-            project.save(manifest)
+            _save_ui_settings(
+                project,
+                manifest,
+                asset_mode=asset_mode_value,
+                voice_name=voice_name,
+                image_provider=image_provider,
+                comfyui_url=comfyui_url,
+                comfyui_image_workflow=(
+                    comfyui_image_workflow
+                ),
+                comfyui_video_workflow=(
+                    comfyui_video_workflow
+                ),
+                auto_videos=auto_videos,
+            )
             st.success(
-                f"Planned {len(project.scenes)} scenes."
+                f"Planned "
+                f"{len(project.scenes)} scenes."
             )
 
     if voice_clicked:
-        project = _load_project(project_dir)
+        project = _load_project(
+            project_dir
+        )
         if not project:
             st.error("Plan scenes first.")
         else:
-            with st.spinner("Generating narration and Whisper timing..."):
-                project = _pipeline(False).build_audio_timeline(
+            _save_ui_settings(
+                project,
+                manifest,
+                asset_mode=asset_mode_value,
+                voice_name=voice_name,
+                image_provider=image_provider,
+                comfyui_url=comfyui_url,
+                comfyui_image_workflow=(
+                    comfyui_image_workflow
+                ),
+                comfyui_video_workflow=(
+                    comfyui_video_workflow
+                ),
+                auto_videos=auto_videos,
+            )
+            with st.spinner(
+                "Generating narration "
+                "and Whisper timing..."
+            ):
+                project = _pipeline(
+                    False
+                ).build_audio_timeline(
                     project,
                     project_dir,
-                    voice_name=voice_name or None,
+                    voice_name=(
+                        voice_name
+                        or None
+                    ),
                     voice_rate=voice_rate,
                 )
-            st.success("Narration and scene timing are ready.")
+            st.success(
+                "Narration and scene "
+                "timing are ready."
+            )
 
-    if images_clicked:
-        project = _load_project(project_dir)
+    if assets_clicked:
+        project = _load_project(
+            project_dir
+        )
         if not project:
             st.error("Plan scenes first.")
         else:
-            with st.spinner("Generating missing scene images..."):
+            _save_ui_settings(
+                project,
+                manifest,
+                asset_mode=asset_mode_value,
+                voice_name=voice_name,
+                image_provider=image_provider,
+                comfyui_url=comfyui_url,
+                comfyui_image_workflow=(
+                    comfyui_image_workflow
+                ),
+                comfyui_video_workflow=(
+                    comfyui_video_workflow
+                ),
+                auto_videos=auto_videos,
+            )
+            with st.spinner(
+                "Generating and checking "
+                "scene images..."
+            ):
                 failures = _auto_images(
                     project,
                     project_dir,
                     attempts=image_attempts,
-                    min_qc_score=float(min_qc_score),
+                    min_qc_score=float(
+                        min_qc_score
+                    ),
                     semantic_qc=semantic_qc,
+                    provider=image_provider,
+                    comfyui_url=comfyui_url,
+                    comfyui_image_workflow=(
+                        comfyui_image_workflow
+                    ),
                 )
             if failures:
                 st.warning(
-                    "Some scenes still need manual assets: "
+                    "Some scenes still need "
+                    "manual images: "
                     + ", ".join(failures)
                 )
             else:
-                st.success("All missing scene images are ready.")
+                st.success(
+                    "All scene images are ready."
+                )
+
+            project = _load_project(
+                project_dir
+            )
+            if auto_videos and project:
+                with st.spinner(
+                    "Animating motion scenes "
+                    "with ComfyUI..."
+                ):
+                    video_failures = _auto_videos(
+                        project,
+                        project_dir,
+                        comfyui_url=comfyui_url,
+                        comfyui_video_workflow=(
+                            comfyui_video_workflow
+                        ),
+                    )
+                if video_failures:
+                    st.warning(
+                        "Video generation failed for "
+                        "some scenes; their still "
+                        "images remain usable: "
+                        + ", ".join(
+                            video_failures
+                        )
+                    )
+                else:
+                    st.success(
+                        "Motion scenes are ready."
+                    )
 
     if render_clicked:
-        project = _load_project(project_dir)
+        project = _load_project(
+            project_dir
+        )
         if not project:
             st.error("Plan scenes first.")
         else:
-            with st.spinner("Rendering final video..."):
-                final = _pipeline(False).render(
+            _save_ui_settings(
+                project,
+                manifest,
+                asset_mode=asset_mode_value,
+                voice_name=voice_name,
+                image_provider=image_provider,
+                comfyui_url=comfyui_url,
+                comfyui_image_workflow=(
+                    comfyui_image_workflow
+                ),
+                comfyui_video_workflow=(
+                    comfyui_video_workflow
+                ),
+                auto_videos=auto_videos,
+            )
+            with st.spinner(
+                "Rendering final video..."
+            ):
+                final = _pipeline(
+                    False
+                ).render(
                     project,
                     project_dir,
-                    bgm_file=bgm_path or None,
+                    bgm_file=(
+                        bgm_path
+                        or None
+                    ),
                     bgm_volume=bgm_volume,
                     font_size=font_size,
                     image_motion=image_motion,
                 )
-            st.success(f"Final video: {final}")
+            st.success(
+                f"Final video: {final}"
+            )
             st.video(str(final))
 
     if full_clicked:
-        if not script.strip() and not project:
+        if (
+            not script.strip()
+            and not project
+        ):
             st.error("Paste a script first.")
         else:
             with st.status(
                 "Running Morrowglass pipeline...",
                 expanded=True,
             ) as status:
-                project = _load_project(project_dir)
+                project = _load_project(
+                    project_dir
+                )
                 if project:
-                    project.asset_mode = AssetMode(asset_mode_value)
-                    project.voice_name = voice_name
-                    project.save(manifest)
+                    _save_ui_settings(
+                        project,
+                        manifest,
+                        asset_mode=(
+                            asset_mode_value
+                        ),
+                        voice_name=voice_name,
+                        image_provider=(
+                            image_provider
+                        ),
+                        comfyui_url=(
+                            comfyui_url
+                        ),
+                        comfyui_image_workflow=(
+                            comfyui_image_workflow
+                        ),
+                        comfyui_video_workflow=(
+                            comfyui_video_workflow
+                        ),
+                        auto_videos=(
+                            auto_videos
+                        ),
+                    )
+
                 if not project:
-                    status.write("Planning scenes...")
+                    status.write(
+                        "Planning scenes "
+                        "and Visual Bible..."
+                    )
                     project_dir.mkdir(
                         parents=True,
                         exist_ok=True,
                     )
-                    (project_dir / "script.txt").write_text(
-                        script.strip() + "\n",
+                    (
+                        project_dir
+                        / "script.txt"
+                    ).write_text(
+                        script.strip()
+                        + "\n",
                         encoding="utf-8",
                     )
-                    project = _pipeline(True).plan_project(
+                    project = _pipeline(
+                        True
+                    ).plan_project(
                         script,
                         project_dir,
                         title=title,
@@ -416,13 +878,39 @@ try:
                             period=period,
                             location=location,
                         ),
-                        asset_mode=AssetMode(asset_mode_value),
+                        asset_mode=AssetMode(
+                            asset_mode_value
+                        ),
                         use_llm=True,
                     )
-                    project.voice_name = voice_name
-                    project.save(manifest)
+                    _save_ui_settings(
+                        project,
+                        manifest,
+                        asset_mode=(
+                            asset_mode_value
+                        ),
+                        voice_name=voice_name,
+                        image_provider=(
+                            image_provider
+                        ),
+                        comfyui_url=(
+                            comfyui_url
+                        ),
+                        comfyui_image_workflow=(
+                            comfyui_image_workflow
+                        ),
+                        comfyui_video_workflow=(
+                            comfyui_video_workflow
+                        ),
+                        auto_videos=(
+                            auto_videos
+                        ),
+                    )
 
-                status.write("Preparing narration and timing...")
+                status.write(
+                    "Preparing narration "
+                    "and timing..."
+                )
                 project = _ensure_audio_timeline(
                     project,
                     project_dir,
@@ -430,77 +918,154 @@ try:
                     voice_rate=voice_rate,
                 )
 
-                missing = _pipeline(False).refresh_assets(
+                missing = _pipeline(
+                    False
+                ).refresh_assets(
                     project,
                     project_dir,
                 )
                 if (
                     missing
-                    and project.asset_mode == AssetMode.AUTO
+                    and project.asset_mode
+                    == AssetMode.AUTO
                 ):
                     status.write(
-                        "Generating and checking scene images..."
+                        "Generating and checking "
+                        "scene images..."
                     )
                     failures = _auto_images(
                         project,
                         project_dir,
                         attempts=image_attempts,
-                        min_qc_score=float(min_qc_score),
+                        min_qc_score=float(
+                            min_qc_score
+                        ),
                         semantic_qc=semantic_qc,
+                        provider=image_provider,
+                        comfyui_url=comfyui_url,
+                        comfyui_image_workflow=(
+                            comfyui_image_workflow
+                        ),
                     )
                     if failures:
                         raise RuntimeError(
-                            "AUTO image generation still failed for: "
-                            + ", ".join(failures)
+                            "AUTO image generation "
+                            "still failed for: "
+                            + ", ".join(
+                                failures
+                            )
                         )
-                    project = _load_project(project_dir)
-                    missing = _pipeline(False).refresh_assets(
-                        project,
-                        project_dir,
+                    project = _load_project(
+                        project_dir
                     )
 
+                if (
+                    auto_videos
+                    and project
+                ):
+                    status.write(
+                        "Animating motion scenes..."
+                    )
+                    video_failures = _auto_videos(
+                        project,
+                        project_dir,
+                        comfyui_url=comfyui_url,
+                        comfyui_video_workflow=(
+                            comfyui_video_workflow
+                        ),
+                    )
+                    if video_failures:
+                        status.write(
+                            "Some AI videos failed; "
+                            "using still images for: "
+                            + ", ".join(
+                                video_failures
+                            )
+                        )
+                    project = _load_project(
+                        project_dir
+                    )
+
+                missing = _pipeline(
+                    False
+                ).refresh_assets(
+                    project,
+                    project_dir,
+                )
                 if missing:
                     status.update(
-                        label="HYBRID checkpoint: add missing assets",
+                        label=(
+                            "HYBRID checkpoint: "
+                            "add missing assets"
+                        ),
                         state="complete",
                     )
                     st.warning(
-                        "Missing: " + ", ".join(missing)
+                        "Missing: "
+                        + ", ".join(missing)
                     )
                     st.info(
-                        f"Use the prompt files in "
-                        f"{project_dir / 'prompts'}, then upload "
-                        "or copy assets into images/ or videos/."
+                        "Use prompt files in "
+                        f"{project_dir / 'prompts'} "
+                        "or upload replacements "
+                        "below."
                     )
                 else:
-                    status.write("Rendering final MP4...")
-                    final = _pipeline(False).render(
+                    status.write(
+                        "Rendering final MP4..."
+                    )
+                    final = _pipeline(
+                        False
+                    ).render(
                         project,
                         project_dir,
-                        bgm_file=bgm_path or None,
-                        bgm_volume=bgm_volume,
+                        bgm_file=(
+                            bgm_path
+                            or None
+                        ),
+                        bgm_volume=(
+                            bgm_volume
+                        ),
                         font_size=font_size,
+                        image_motion=(
+                            image_motion
+                        ),
                     )
                     status.update(
-                        label="Morrowglass video complete",
+                        label=(
+                            "Morrowglass video "
+                            "complete"
+                        ),
                         state="complete",
                     )
-                    st.success(f"Final video: {final}")
+                    st.success(
+                        f"Final video: {final}"
+                    )
                     st.video(str(final))
 
-except ImageGenerationUnavailable as exc:
+except (
+    ImageGenerationUnavailable,
+    VideoGenerationUnavailable,
+) as exc:
     st.error(str(exc))
 except Exception as exc:
     st.exception(exc)
 
 project = _load_project(project_dir)
 if project:
-    resolve_assets(project, project_dir)
+    resolve_assets(
+        project,
+        project_dir,
+    )
     project.save(manifest)
-    missing = missing_scene_ids(project)
+    missing = missing_scene_ids(
+        project
+    )
 
     st.divider()
-    left, right = st.columns([2, 1])
+    left, right = st.columns(
+        [2, 1]
+    )
     with left:
         st.subheader(
             f"Scenes ({len(project.scenes)})"
@@ -513,16 +1078,47 @@ if project:
     with right:
         st.metric(
             "Assets ready",
-            len(project.scenes) - len(missing),
+            (
+                len(project.scenes)
+                - len(missing)
+            ),
         )
-        st.metric("Missing", len(missing))
+        st.metric(
+            "Missing",
+            len(missing),
+        )
+        rendered = project.metadata.get(
+            "scene_clips_rendered"
+        )
+        reused = project.metadata.get(
+            "scene_clips_reused"
+        )
+        if (
+            rendered is not None
+            or reused is not None
+        ):
+            st.caption(
+                "Last render cache: "
+                f"{rendered or 0} rebuilt / "
+                f"{reused or 0} reused"
+            )
+
         final_path = Path(
-            str(project.metadata.get("final_video_file") or "")
+            str(
+                project.metadata.get(
+                    "final_video_file"
+                )
+                or ""
+            )
         )
         if final_path.is_file():
-            st.video(str(final_path))
+            st.video(
+                str(final_path)
+            )
 
-    st.subheader("Scene review / replacement")
+    st.subheader(
+        "Scene review / replacement"
+    )
     scene_ids = [
         scene.scene_id
         for scene in project.scenes
@@ -534,30 +1130,67 @@ if project:
     selected = next(
         scene
         for scene in project.scenes
-        if scene.scene_id == selected_id
+        if scene.scene_id
+        == selected_id
     )
 
-    scene_left, scene_right = st.columns(2)
+    scene_left, scene_right = (
+        st.columns(2)
+    )
     with scene_left:
         st.write("**Narration**")
-        st.write(selected.narration)
-        st.write("**Expected visual**")
-        st.write(selected.visual_description)
-        st.write("**Generation prompt**")
-        st.code(selected.image_prompt)
+        st.write(
+            selected.narration
+        )
+        st.write(
+            "**Expected visual**"
+        )
+        st.write(
+            selected.visual_description
+        )
+        st.write(
+            "**Generation prompt**"
+        )
+        st.code(
+            selected.image_prompt
+        )
+        if selected.motion_prompt:
+            st.write(
+                "**Motion prompt**"
+            )
+            st.code(
+                selected.motion_prompt
+            )
+        if selected.qc_notes:
+            st.write("**QC notes**")
+            for note in selected.qc_notes:
+                st.caption(note)
 
     with scene_right:
         if selected.asset_path:
-            selected_path = Path(selected.asset_path)
-            if selected_path.suffix.lower() in IMAGE_EXTS:
+            selected_path = Path(
+                selected.asset_path
+            )
+            if (
+                selected_path.suffix.lower()
+                in IMAGE_EXTS
+            ):
                 st.image(
                     str(selected_path),
                     use_container_width=True,
                 )
-            elif selected_path.suffix.lower() in VIDEO_EXTS:
-                st.video(str(selected_path))
+            elif (
+                selected_path.suffix.lower()
+                in VIDEO_EXTS
+            ):
+                st.video(
+                    str(selected_path)
+                )
         else:
-            st.info("No asset for this scene yet.")
+            st.info(
+                "No asset for this "
+                "scene yet."
+            )
 
         uploaded = st.file_uploader(
             "Replace this scene asset",
@@ -566,32 +1199,58 @@ if project:
                 "jpg",
                 "jpeg",
                 "webp",
+                "bmp",
                 "mp4",
                 "mov",
                 "mkv",
                 "webm",
+                "gif",
             ],
-            key=f"asset_{selected_id}",
+            key=(
+                f"asset_{selected_id}"
+            ),
         )
-        if uploaded is not None and st.button(
-            "Save replacement",
-            key=f"save_{selected_id}",
+        if (
+            uploaded is not None
+            and st.button(
+                "Save replacement",
+                key=(
+                    f"save_{selected_id}"
+                ),
+            )
         ):
             saved = _save_uploaded_asset(
                 project_dir,
                 selected_id,
                 uploaded,
             )
-            resolve_assets(project, project_dir)
+            resolve_assets(
+                project,
+                project_dir,
+            )
             project.save(manifest)
-            st.success(f"Saved: {saved}")
+            st.success(
+                f"Saved: {saved}"
+            )
             st.rerun()
 
-    if project.metadata.get("image_generation_failures"):
+    failures = project.metadata.get(
+        "image_generation_failures"
+    )
+    if failures:
         st.warning(
             "Image generation failures: "
+            + ", ".join(failures)
+        )
+
+    video_failures = project.metadata.get(
+        "video_generation_failures"
+    )
+    if video_failures:
+        st.warning(
+            "Video generation failures: "
             + ", ".join(
-                project.metadata["image_generation_failures"]
+                video_failures
             )
         )
 
@@ -600,4 +1259,6 @@ if project:
         "",
     )
     if vision_url:
-        st.caption("Semantic vision QC configured.")
+        st.caption(
+            "Semantic vision QC configured."
+        )
