@@ -59,13 +59,22 @@ def _make_contiguous(scenes: list[Scene], audio_duration: float | None) -> None:
 
 def assign_from_srt(scenes: list[Scene], cues: list[Cue], audio_duration: float | None = None) -> list[Scene]:
     if not scenes: return scenes
-    if not cues:
-        if audio_duration is None: raise ValueError("audio_duration is required when subtitle cues are unavailable")
-        return assign_by_duration(scenes, audio_duration)
+    if not cues or len(cues) < len(scenes):
+        if audio_duration is None:
+            if cues:
+                audio_duration = cues[-1].end
+            else:
+                raise ValueError("audio_duration is required when subtitle cues are unavailable")
+        return assign_by_duration(scenes, float(audio_duration))
+
     cue_counts = [max(1, len(_tokens(c.text))) for c in cues]
     scene_counts = [max(1, len(_tokens(s.narration))) for s in scenes]
     cue_i = 0
     for scene_i, scene in enumerate(scenes):
+        if cue_i >= len(cues):
+            if audio_duration is None:
+                audio_duration = cues[-1].end
+            return assign_by_duration(scenes, float(audio_duration))
         start_i = cue_i
         target = scene_counts[scene_i]
         consumed = 0
