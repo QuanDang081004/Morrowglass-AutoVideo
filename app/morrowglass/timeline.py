@@ -8,6 +8,9 @@ import re
 from .models import Scene
 
 
+TIMELINE_VERSION = 2
+
+
 @dataclass(slots=True)
 class Cue:
     start: float
