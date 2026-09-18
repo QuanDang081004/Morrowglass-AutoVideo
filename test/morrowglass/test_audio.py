@@ -156,6 +156,59 @@ class AudioTests(unittest.TestCase):
             )
             local_tts.assert_called_once()
 
+    def test_narration_fingerprint_tracks_voice_settings(self):
+        project = MorrowglassProject(
+            "x",
+            "hello world",
+            [
+                Scene(
+                    "scene_001",
+                    "hello world",
+                    "hello",
+                    "hello",
+                )
+            ],
+        )
+        first = audio.narration_fingerprint(
+            project,
+            voice_name="kokoro-en:am_michael",
+            voice_rate=1.0,
+            voice_volume=1.0,
+            kokoro_en_python=r"C:\KokoroEN\python.exe",
+        )
+        same = audio.narration_fingerprint(
+            project,
+            voice_name="kokoro-en:am_michael",
+            voice_rate=1.0,
+            voice_volume=1.0,
+            kokoro_en_python=r"C:\KokoroEN\python.exe",
+        )
+        changed_voice = audio.narration_fingerprint(
+            project,
+            voice_name="kokoro-en:af_heart",
+            voice_rate=1.0,
+            voice_volume=1.0,
+            kokoro_en_python=r"C:\KokoroEN\python.exe",
+        )
+        changed_rate = audio.narration_fingerprint(
+            project,
+            voice_name="kokoro-en:am_michael",
+            voice_rate=0.95,
+            voice_volume=1.0,
+            kokoro_en_python=r"C:\KokoroEN\python.exe",
+        )
+        changed_volume = audio.narration_fingerprint(
+            project,
+            voice_name="kokoro-en:am_michael",
+            voice_rate=1.0,
+            voice_volume=1.1,
+            kokoro_en_python=r"C:\KokoroEN\python.exe",
+        )
+        self.assertEqual(first, same)
+        self.assertNotEqual(first, changed_voice)
+        self.assertNotEqual(first, changed_rate)
+        self.assertNotEqual(first, changed_volume)
+
     def test_missing_local_kokoro_python_is_clear(self):
         with patch.dict(
             "os.environ",
