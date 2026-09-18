@@ -17,6 +17,26 @@ class CaptionTests(unittest.TestCase):
         self.assertEqual(groups[0].text, "And with every visit,")
         self.assertEqual(groups[1].text, "another brick was added.")
 
+    def test_write_srt_ends_with_blank_line_for_moviepy(self):
+        cues = [
+            Cue(
+                0.0,
+                1.0,
+                "single caption",
+            )
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = write_srt(
+                cues,
+                Path(directory) / "single.srt",
+            )
+            payload = path.read_text(
+                encoding="utf-8"
+            )
+        self.assertTrue(
+            payload.endswith("\n\n")
+        )
+
     def test_write_and_parse_roundtrip(self):
         cues = [Cue(0.0, 1.25, "hello world")]
         with tempfile.TemporaryDirectory() as d:
