@@ -7,6 +7,9 @@ from PIL import Image
 
 from app.models.schema import MaterialInfo
 from app.morrowglass.generators import (
+    ImageGenerationUnavailable,
+    _motion_source_fingerprint,
+    _resolve_image_provider,
     _scene_seed,
     generate_missing_scene_images,
     generate_motion_scene_videos,
@@ -60,6 +63,11 @@ class GeneratorTests(unittest.TestCase):
             with (
                 patch(
                     "app.morrowglass.generators."
+                    "paid_providers_enabled",
+                    return_value=True,
+                ),
+                patch(
+                    "app.morrowglass.generators."
                     "mpt_openai_image_ready",
                     return_value=True,
                 ),
@@ -88,6 +96,65 @@ class GeneratorTests(unittest.TestCase):
                 "a precise historical image",
                 generate.call_args.kwargs["search_term"],
             )
+
+    def test_paid_image_provider_is_blocked_by_default(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "app.morrowglass.generators."
+                "paid_providers_enabled",
+                return_value=False,
+            ),
+        ):
+            with self.assertRaises(
+                ImageGenerationUnavailable
+            ):
+                _resolve_image_provider(
+                    "mpt_openai",
+                    Path(directory),
+                    None,
+                )
+
+    def test_motion_fingerprint_changes_when_source_image_changes(self):
+        scene = Scene(
+            "scene_001",
+            "motion",
+            "visible motion",
+            "prompt",
+            motion_prompt="slow walk",
+            asset_type=AssetType.IMAGE_TO_VIDEO,
+        )
+        project = MorrowglassProject(
+            "x",
+            "motion",
+            [scene],
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "scene.png"
+            workflow = root / "video.json"
+            image.write_bytes(b"first")
+            workflow.write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            first = _motion_source_fingerprint(
+                scene=scene,
+                project=project,
+                image=image,
+                workflow_path=workflow,
+            )
+            image.write_bytes(b"second")
+            second = _motion_source_fingerprint(
+                scene=scene,
+                project=project,
+                image=image,
+                workflow_path=workflow,
+            )
+        self.assertNotEqual(
+            first,
+            second,
+        )
 
     def test_comfyui_image_provider_uses_scene_prompt(self):
         project = MorrowglassProject(
