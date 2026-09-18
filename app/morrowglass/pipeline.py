@@ -11,7 +11,10 @@ from .assets import (
 from .audio import synthesize_narration, transcribe_word_timing
 from .bible import enrich_visual_bible
 from .director import SceneDirector
-from .generators import generate_missing_scene_images
+from .generators import (
+    generate_missing_scene_images,
+    generate_motion_scene_videos,
+)
 from .models import AssetMode, MorrowglassProject, VisualBible
 from .renderer import render_final_video
 from .timeline import assign_from_srt, parse_srt
@@ -125,6 +128,9 @@ class MorrowglassPipeline:
         semantic_qc: bool = True,
         min_qc_score: float = 75.0,
         max_attempts: int = 2,
+        provider: str = "auto",
+        comfyui_url: str | None = None,
+        comfyui_workflow: str | Path | None = None,
     ) -> list[str]:
         self.refresh_assets(project, project_dir)
         failures = generate_missing_scene_images(
@@ -134,6 +140,31 @@ class MorrowglassPipeline:
             semantic_qc=semantic_qc,
             min_qc_score=min_qc_score,
             max_attempts=max_attempts,
+            provider=provider,
+            comfyui_url=comfyui_url,
+            comfyui_workflow=comfyui_workflow,
+        )
+        self.refresh_assets(project, project_dir)
+        return failures
+
+    def auto_generate_videos(
+        self,
+        project: MorrowglassProject,
+        project_dir: str | Path,
+        *,
+        overwrite: bool = False,
+        comfyui_url: str | None = None,
+        comfyui_workflow: str | Path | None = None,
+        timeout: float = 2400.0,
+    ) -> list[str]:
+        self.refresh_assets(project, project_dir)
+        failures = generate_motion_scene_videos(
+            project,
+            project_dir,
+            overwrite=overwrite,
+            comfyui_url=comfyui_url,
+            comfyui_workflow=comfyui_workflow,
+            timeout=timeout,
         )
         self.refresh_assets(project, project_dir)
         return failures
