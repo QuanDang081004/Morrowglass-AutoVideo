@@ -129,10 +129,26 @@ def cmd_run(args) -> int:
         )
     else:
         project = MorrowglassProject.load(manifest)
+        project.asset_mode = AssetMode(args.asset_mode)
+        if args.voice:
+            project.voice_name = args.voice
+        project.save(manifest)
 
-    if not project.metadata.get("audio_file") or not project.metadata.get("word_subtitle_file"):
+    audio_file = Path(str(project.metadata.get("audio_file") or ""))
+    word_timing_file = Path(
+        str(project.metadata.get("word_subtitle_file") or "")
+    )
+    audio_ready = audio_file.is_file() and word_timing_file.is_file()
+    timing_ready = bool(project.scenes) and all(
+        scene.start is not None and scene.end is not None
+        for scene in project.scenes
+    )
+    if not (audio_ready and timing_ready):
         _pipeline(False).build_audio_timeline(
-            project, project_dir, voice_name=args.voice or None, voice_rate=args.rate
+            project,
+            project_dir,
+            voice_name=args.voice or None,
+            voice_rate=args.rate,
         )
         project = MorrowglassProject.load(manifest)
 
