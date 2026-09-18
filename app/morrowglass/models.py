@@ -12,6 +12,16 @@ ASPECT_RESOLUTIONS = {
     "9:16": (1080, 1920),
 }
 
+ASPECT_COMPOSITIONS = {
+    "16:9": (
+        "horizontal 16:9 composition, cinematic widescreen framing"
+    ),
+    "9:16": (
+        "vertical 9:16 composition, mobile-first framing, "
+        "main subject kept inside the center safe area"
+    ),
+}
+
 
 def normalize_aspect(value: str | None) -> str:
     aspect = str(value or "16:9").strip()
@@ -34,14 +44,9 @@ def aspect_composition(
     value: str | None,
 ) -> str:
     aspect = normalize_aspect(value)
-    if aspect == "9:16":
-        return (
-            "vertical 9:16 composition, mobile-first framing, "
-            "main subject kept inside the center safe area"
-        )
-    return (
-        "horizontal 16:9 composition, cinematic widescreen framing"
-    )
+    return ASPECT_COMPOSITIONS[
+        aspect
+    ]
 
 
 class AssetMode(str, Enum):
@@ -116,12 +121,45 @@ class MorrowglassProject:
         normalized = normalize_aspect(
             aspect
         )
+        composition = aspect_composition(
+            normalized
+        )
+
+        def _retarget(
+            value: str,
+        ) -> str:
+            text = str(value or "")
+            for old in (
+                ASPECT_COMPOSITIONS.values()
+            ):
+                text = text.replace(
+                    old,
+                    "",
+                )
+            text = " ".join(
+                text.replace(" ,", ",").split()
+            ).strip(" ,")
+            if text:
+                return (
+                    text
+                    + ", "
+                    + composition
+                )
+            return composition
+
         self.aspect = normalized
         self.resolution = (
             resolution_for_aspect(
                 normalized
             )
         )
+        self.visual_bible.style = _retarget(
+            self.visual_bible.style
+        )
+        for scene in self.scenes:
+            scene.image_prompt = _retarget(
+                scene.image_prompt
+            )
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
