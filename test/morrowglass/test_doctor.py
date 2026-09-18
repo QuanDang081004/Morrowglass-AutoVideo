@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 from app.morrowglass.doctor import (
     Check,
-    _check_local_kokoro,
+    _check_local_python_package,
     required_checks_pass,
 )
 
@@ -43,7 +43,7 @@ class DoctorTests(unittest.TestCase):
             required_checks_pass(checks)
         )
 
-    def test_local_kokoro_python_can_be_verified(self):
+    def test_local_package_can_be_verified(self):
         with tempfile.TemporaryDirectory() as directory:
             python_path = (
                 Path(directory)
@@ -52,15 +52,23 @@ class DoctorTests(unittest.TestCase):
             python_path.write_bytes(b"x")
             result = Mock()
             result.returncode = 0
-            result.stdout = "kokoro-ok"
+            result.stdout = "ok"
             result.stderr = ""
 
             with patch(
                 "app.morrowglass.doctor.subprocess.run",
                 return_value=result,
             ) as run:
-                check = _check_local_kokoro(
-                    python_path
+                check = _check_local_python_package(
+                    name="Kokoro VI",
+                    python_path=python_path,
+                    env_name=(
+                        "MORROWGLASS_KOKORO_VI_PYTHON"
+                    ),
+                    import_statement=(
+                        "from kokoro_vietnamese "
+                        "import KokoroVietnamese"
+                    ),
                 )
 
         self.assertTrue(check.ok)
@@ -70,11 +78,20 @@ class DoctorTests(unittest.TestCase):
             str(python_path),
         )
 
-    def test_missing_local_kokoro_is_optional(self):
+    def test_missing_local_package_is_optional(self):
         with tempfile.TemporaryDirectory() as directory:
-            check = _check_local_kokoro(
-                Path(directory)
-                / "missing.exe"
+            check = _check_local_python_package(
+                name="Kokoro EN",
+                python_path=(
+                    Path(directory)
+                    / "missing.exe"
+                ),
+                env_name=(
+                    "MORROWGLASS_KOKORO_EN_PYTHON"
+                ),
+                import_statement=(
+                    "from kokoro import KPipeline"
+                ),
             )
         self.assertFalse(check.ok)
         self.assertFalse(check.required)
