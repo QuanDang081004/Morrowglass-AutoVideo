@@ -90,14 +90,22 @@ class MorrowglassPipeline:
         *,
         voice_name: str | None = None,
         voice_rate: float = 1.0,
+        voice_volume: float = 1.0,
         kokoro_python: str | Path | None = None,
+        kokoro_en_python: str | Path | None = None,
+        kokoro_vi_python: str | Path | None = None,
+        kokoro_vi_device: str = "cpu",
     ) -> MorrowglassProject:
         audio_file, duration = synthesize_narration(
             project,
             project_dir,
             voice_name=voice_name,
             voice_rate=voice_rate,
+            voice_volume=voice_volume,
             kokoro_python=kokoro_python,
+            kokoro_en_python=kokoro_en_python,
+            kokoro_vi_python=kokoro_vi_python,
+            kokoro_vi_device=kokoro_vi_device,
         )
         words_srt = transcribe_word_timing(
             project,
