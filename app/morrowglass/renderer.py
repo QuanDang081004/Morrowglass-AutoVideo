@@ -409,7 +409,7 @@ def render_final_video(
     params = VideoParams(
         video_subject=project.title,
         video_script=project.script,
-        video_aspect=VideoAspect.landscape.value,
+        video_aspect=project.aspect,
         video_fit_mode=VideoFitMode(fit_mode),
         voice_name=project.voice_name,
         bgm_type="custom" if bgm_file else "",
