@@ -461,6 +461,11 @@ st.caption(
     "Paste script → scene plan → Kokoro → Whisper → "
     "free-first auto assets → edit → final MP4"
 )
+if not _external_ai_enabled():
+    st.success(
+        "FREE-ONLY mode is ON — paid/external AI providers "
+        "are blocked by default."
+    )
 
 default_project = str(
     ROOT
@@ -661,13 +666,20 @@ with st.sidebar:
     ):
         default_tts_engine = "Kokoro English"
     else:
-        default_tts_engine = "MPT / other"
+        default_tts_engine = (
+            "MPT / other"
+            if _external_ai_enabled()
+            else "Kokoro English"
+        )
 
     tts_engines = [
         "Kokoro English",
         "Kokoro Vietnamese",
-        "MPT / other",
     ]
+    if _external_ai_enabled():
+        tts_engines.append(
+            "MPT / other"
+        )
     tts_engine = st.selectbox(
         "TTS engine",
         options=tts_engines,
