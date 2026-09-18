@@ -384,6 +384,10 @@ try:
                 expanded=True,
             ) as status:
                 project = _load_project(project_dir)
+                if project:
+                    project.asset_mode = AssetMode(asset_mode_value)
+                    project.voice_name = voice_name
+                    project.save(manifest)
                 if not project:
                     status.write("Planning scenes...")
                     project_dir.mkdir(
