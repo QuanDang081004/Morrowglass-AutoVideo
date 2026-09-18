@@ -774,6 +774,7 @@ def _add_image_options(parser) -> None:
         "--image-provider",
         choices=[
             "auto",
+            "wikimedia",
             "mpt_openai",
             "comfyui",
         ],
@@ -853,7 +854,7 @@ def build_parser() -> argparse.ArgumentParser:
             mode.value
             for mode in AssetMode
         ],
-        default="hybrid",
+        default="auto",
     )
     plan.add_argument(
         "--no-llm",
@@ -991,7 +992,7 @@ def build_parser() -> argparse.ArgumentParser:
             mode.value
             for mode in AssetMode
         ],
-        default="hybrid",
+        default="auto",
     )
     run.add_argument(
         "--no-llm",
