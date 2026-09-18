@@ -85,38 +85,42 @@ def _check_kokoro_api(
         )
 
 
-def _check_local_kokoro(
-    kokoro_python: str | Path | None,
+def _check_local_python_package(
+    *,
+    name: str,
+    python_path: str | Path | None,
+    env_name: str,
+    import_statement: str,
 ) -> Check:
     configured = str(
-        kokoro_python
+        python_path
         or os.getenv(
-            "MORROWGLASS_KOKORO_PYTHON",
+            env_name,
             "",
         )
     ).strip()
     if not configured:
         return Check(
-            "Kokoro local",
+            name,
             False,
             (
-                "optional; no external "
-                "Kokoro Python configured"
+                "optional; no Python "
+                "interpreter configured"
             ),
             required=False,
         )
 
-    python_path = Path(
+    executable = Path(
         configured
     ).expanduser()
-    if not python_path.is_file():
+    if not executable.is_file():
         return Check(
-            "Kokoro local",
+            name,
             False,
             (
                 "configured Python "
                 f"does not exist: "
-                f"{python_path}"
+                f"{executable}"
             ),
             required=False,
         )
@@ -124,12 +128,11 @@ def _check_local_kokoro(
     try:
         result = subprocess.run(
             [
-                str(python_path),
+                str(executable),
                 "-c",
                 (
-                    "from kokoro import "
-                    "KPipeline; "
-                    "print('kokoro-ok')"
+                    import_statement
+                    + "; print('ok')"
                 ),
             ],
             capture_output=True,
@@ -137,15 +140,15 @@ def _check_local_kokoro(
             encoding="utf-8",
             errors="replace",
             check=False,
-            timeout=20,
+            timeout=30,
         )
     except Exception as exc:
         return Check(
-            "Kokoro local",
+            name,
             False,
             (
                 f"could not run "
-                f"{python_path}: "
+                f"{executable}: "
                 f"{type(exc).__name__}"
             ),
             required=False,
@@ -153,11 +156,11 @@ def _check_local_kokoro(
 
     if result.returncode == 0:
         return Check(
-            "Kokoro local",
+            name,
             True,
             (
-                "KPipeline import works "
-                f"via {python_path}"
+                "import works via "
+                f"{executable}"
             ),
             required=False,
         )
@@ -168,10 +171,10 @@ def _check_local_kokoro(
         or ""
     ).strip()
     return Check(
-        "Kokoro local",
+        name,
         False,
         (
-            "KPipeline import failed: "
+            "import failed: "
             f"{details[-500:]}"
         ),
         required=False,
@@ -260,6 +263,8 @@ def run_doctor(
     project_dir: str | Path | None = None,
     *,
     kokoro_python: str | Path | None = None,
+    kokoro_en_python: str | Path | None = None,
+    kokoro_vi_python: str | Path | None = None,
 ) -> list[Check]:
     python_ok = (
         sys.version_info
@@ -280,6 +285,26 @@ def run_doctor(
             "MORROWGLASS_VISION_MODEL",
             "",
         ).strip()
+    )
+
+    en_python = (
+        kokoro_en_python
+        or kokoro_python
+        or os.getenv(
+            "MORROWGLASS_KOKORO_EN_PYTHON",
+            "",
+        )
+        or os.getenv(
+            "MORROWGLASS_KOKORO_PYTHON",
+            "",
+        )
+    )
+    vi_python = (
+        kokoro_vi_python
+        or os.getenv(
+            "MORROWGLASS_KOKORO_VI_PYTHON",
+            "",
+        )
     )
 
     checks = [
@@ -319,8 +344,26 @@ def run_doctor(
             ),
         ),
         _check_kokoro_api(),
-        _check_local_kokoro(
-            kokoro_python
+        _check_local_python_package(
+            name="Kokoro EN",
+            python_path=en_python,
+            env_name=(
+                "MORROWGLASS_KOKORO_EN_PYTHON"
+            ),
+            import_statement=(
+                "from kokoro import KPipeline"
+            ),
+        ),
+        _check_local_python_package(
+            name="Kokoro VI",
+            python_path=vi_python,
+            env_name=(
+                "MORROWGLASS_KOKORO_VI_PYTHON"
+            ),
+            import_statement=(
+                "from kokoro_vietnamese "
+                "import KokoroVietnamese"
+            ),
         ),
         _check_comfyui(
             project_dir
