@@ -79,6 +79,7 @@ def cmd_voice(args) -> int:
         args.project_dir,
         voice_name=args.voice or None,
         voice_rate=args.rate,
+        kokoro_python=args.kokoro_python or None,
     )
     project = MorrowglassProject.load(manifest)
     print(
@@ -394,6 +395,7 @@ def cmd_run(args) -> int:
             project_dir,
             voice_name=args.voice or None,
             voice_rate=args.rate,
+            kokoro_python=args.kokoro_python or None,
         )
         project = MorrowglassProject.load(
             manifest
@@ -490,7 +492,15 @@ def cmd_doctor(args) -> int:
             args,
             "project_dir",
             None,
-        )
+        ),
+        kokoro_python=(
+            getattr(
+                args,
+                "kokoro_python",
+                "",
+            )
+            or None
+        ),
     )
     print("")
     print(
@@ -523,6 +533,27 @@ def cmd_doctor(args) -> int:
         "need attention."
     )
     return 2
+
+
+def _add_tts_options(parser) -> None:
+    parser.add_argument(
+        "--voice",
+        default="",
+    )
+    parser.add_argument(
+        "--rate",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--kokoro-python",
+        default="",
+        help=(
+            "Python executable from an existing "
+            "Kokoro KPipeline environment. Use with "
+            "voices such as kokoro-local:am_michael."
+        ),
+    )
 
 
 def _add_render_options(parser) -> None:
@@ -686,15 +717,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--project-dir",
         required=True,
     )
-    voice.add_argument(
-        "--voice",
-        default="",
-    )
-    voice.add_argument(
-        "--rate",
-        type=float,
-        default=1.0,
-    )
+    _add_tts_options(voice)
     voice.set_defaults(func=cmd_voice)
 
     images = sub.add_parser(
@@ -755,6 +778,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--project-dir",
         default="",
     )
+    doctor.add_argument(
+        "--kokoro-python",
+        default="",
+    )
     doctor.set_defaults(func=cmd_doctor)
 
     render = sub.add_parser(
@@ -807,15 +834,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-llm",
         action="store_true",
     )
-    run.add_argument(
-        "--voice",
-        default="",
-    )
-    run.add_argument(
-        "--rate",
-        type=float,
-        default=1.0,
-    )
+    _add_tts_options(run)
     _add_comfyui_options(run)
     _add_image_options(run)
     _add_video_options(run)
