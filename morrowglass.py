@@ -104,6 +104,7 @@ def cmd_plan(args) -> int:
         title=args.title,
         bible=bible,
         asset_mode=AssetMode(args.asset_mode),
+        aspect=args.aspect,
         use_llm=not args.no_llm,
     )
     print(f"Created {len(project.scenes)} scenes")
@@ -404,6 +405,7 @@ def cmd_run(args) -> int:
             asset_mode=AssetMode(
                 args.asset_mode
             ),
+            aspect=args.aspect,
             use_llm=not args.no_llm,
         )
     else:
@@ -412,6 +414,9 @@ def cmd_run(args) -> int:
         )
         project.asset_mode = AssetMode(
             args.asset_mode
+        )
+        project.set_aspect(
+            args.aspect
         )
         if args.voice:
             project.voice_name = args.voice
@@ -520,7 +525,10 @@ def cmd_run(args) -> int:
             args,
         )
         if result != 0:
-            return result
+            print(
+                "FREE AUTO could not resolve every scene; "
+                "continuing to the manual fallback checkpoint."
+            )
         project = MorrowglassProject.load(
             manifest
         )
@@ -849,6 +857,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
     )
     plan.add_argument(
+        "--aspect",
+        choices=["16:9", "9:16"],
+        default="16:9",
+    )
+    plan.add_argument(
         "--asset-mode",
         choices=[
             mode.value
@@ -985,6 +998,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--location",
         default="",
+    )
+    run.add_argument(
+        "--aspect",
+        choices=["16:9", "9:16"],
+        default="16:9",
     )
     run.add_argument(
         "--asset-mode",
