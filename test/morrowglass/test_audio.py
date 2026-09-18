@@ -233,6 +233,37 @@ class AudioTests(unittest.TestCase):
         self.assertNotEqual(first, changed_rate)
         self.assertNotEqual(first, changed_volume)
 
+    def test_external_tts_is_blocked_in_free_only(self):
+        project = MorrowglassProject(
+            "x",
+            "hello",
+            [
+                Scene(
+                    "scene_001",
+                    "hello",
+                    "hello",
+                    "hello",
+                )
+            ],
+        )
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict(
+                "os.environ",
+                {},
+                clear=True,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "FREE-ONLY",
+            ):
+                audio.synthesize_narration(
+                    project,
+                    directory,
+                    voice_name="en-US-TestVoice",
+                )
+
     def test_missing_local_kokoro_python_is_clear(self):
         with patch.dict(
             "os.environ",
