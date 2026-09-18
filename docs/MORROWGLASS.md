@@ -5,30 +5,62 @@ Scene-aware automation layer for MoneyPrinterTurbo. Development happens on **mor
 ## Implemented
 
 ### Phase 1 — scene intelligence
-- script -> chronological scene manifest
+- final script -> chronological scene manifest
 - MPT LLM reuse + deterministic fallback
-- image/motion prompt per scene
+- image and motion prompt per scene
 - Visual Bible for historical continuity
 - hybrid/manual asset discovery
-- SRT-aware scene timing
 
 ### Phase 2 — narration and timing
-- MPT TTS reuse, including Kokoro voices such as kokoro:am_michael
+- MPT TTS reuse, including Kokoro voices such as `kokoro:am_michael`
 - narration audio generation
 - faster-whisper word-level SRT
-- automatic scene start/end timing written back to project.json
+- automatic contiguous scene start/end timing written to `project.json`
 
-## Current CLI
+### Phase 3 — scene-aware render
+- exact-duration scene clips instead of a global `video_clip_duration`
+- images: hold for the exact scene duration
+- videos: trim or loop to the exact scene duration
+- 1920x1080 cover/contain normalization through FFmpeg
+- deterministic chronological concat
+- word timing -> readable caption chunks
+- reuse MPT final compositor for narration, subtitles and BGM
+- final output: `output/morrowglass_final.mp4`
 
-python morrowglass.py plan script.txt --project-dir D:\\Morrowglass\\Video02 --period "13th-century Japan" --asset-mode hybrid
-python morrowglass.py voice --project-dir D:\\Morrowglass\\Video02 --voice kokoro:am_michael
-python morrowglass.py status --project-dir D:\\Morrowglass\\Video02
+## HYBRID workflow
+
+```bat
+python morrowglass.py run script.txt --project-dir D:\Morrowglass\Video02 --period "13th-century Japan" --voice kokoro:am_michael
+```
+
+First run:
+1. plans scenes
+2. creates prompt files
+3. creates narration
+4. creates word timing + scene timing
+5. checks `images/` and `videos/`
+6. stops and lists missing scenes
+
+Place assets using scene names such as:
+
+```text
+images/scene_001.png
+images/scene_002.jpg
+videos/scene_003.mp4
+```
+
+Run the same command again. Existing planning/audio is reused and the final render is produced.
+
+Optional local BGM:
+
+```bat
+python morrowglass.py render --project-dir D:\Morrowglass\Video02 --bgm D:\Music\history.mp3 --bgm-volume 0.12
+```
 
 ## Next
-
-1. scene-aware renderer using MPT/FFmpeg
-2. final subtitle/BGM integration
-3. WebUI controls
-4. ComfyUI provider
-5. visual QC + retries
-6. optional image-to-video provider
+1. visual WebUI for scene review/replacement
+2. ComfyUI image provider
+3. visual QC + automatic retry
+4. optional image-to-video provider
+5. better still-image motion/transition presets
+6. end-to-end Windows test on the Morrowglass machine
