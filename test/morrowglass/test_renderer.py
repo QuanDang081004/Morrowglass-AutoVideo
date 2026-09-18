@@ -23,6 +23,22 @@ class RendererTests(unittest.TestCase):
         self.assertIn("scale=1920:1080", value)
         self.assertIn("crop=1920:1080", value)
 
+    def test_vertical_filter_targets_exact_canvas(self):
+        value = _fit_filter(
+            1080,
+            1920,
+            "cover",
+            30,
+        )
+        self.assertIn(
+            "scale=1080:1920",
+            value,
+        )
+        self.assertIn(
+            "crop=1080:1920",
+            value,
+        )
+
     def test_image_command_loops_for_exact_duration(self):
         cmd = _build_scene_ffmpeg_command(
             asset_path="scene_001.jpg",
