@@ -7,8 +7,11 @@ from typing import Callable
 
 from .models import AssetType, MorrowglassProject, Scene, VisualBible
 
-_JSON_FENCE = re.compile(r"\x60\x60\x60(?:json)?\\s*(.*?)\x60\x60\x60", re.IGNORECASE | re.DOTALL)
-_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\\s+(?=[A-Z0-9\"'])")
+_JSON_FENCE = re.compile(
+    r"```(?:json)?\s*(.*?)```",
+    re.IGNORECASE | re.DOTALL,
+)
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])")
 
 
 def _extract_json(text: str):
@@ -16,7 +19,9 @@ def _extract_json(text: str):
     fenced = _JSON_FENCE.search(text)
     if fenced:
         text = fenced.group(1).strip()
-    first_obj = min([p for p in (text.find("["), text.find("{")) if p >= 0], default=0)
+
+    positions = [p for p in (text.find("["), text.find("{")) if p >= 0]
+    first_obj = min(positions, default=0)
     text = text[first_obj:]
     try:
         return json.loads(text)
@@ -33,34 +38,47 @@ def _extract_json(text: str):
 
 
 def split_script(script: str, target_words: int = 24) -> list[str]:
-    normalized = re.sub(r"\\s+", " ", script or "").strip()
+    normalized = re.sub(r"\s+", " ", script or "").strip()
     if not normalized:
         return []
+
     sentences = _SENTENCE_BOUNDARY.split(normalized)
     scenes: list[str] = []
     buf: list[str] = []
     words = 0
+
     for sentence in sentences:
         sentence = sentence.strip()
         if not sentence:
             continue
+
         count = len(sentence.split())
         if buf and words + count > max(target_words * 1.45, target_words + 10):
             scenes.append(" ".join(buf))
-            buf, words = [], 0
+            buf = []
+            words = 0
+
         buf.append(sentence)
         words += count
         if words >= target_words:
             scenes.append(" ".join(buf))
-            buf, words = [], 0
+            buf = []
+            words = 0
+
     if buf:
         scenes.append(" ".join(buf))
     return scenes
 
 
-def _prompt_for_scene(narration: str, bible: VisualBible, scene_visual: str = "") -> str:
+def _prompt_for_scene(
+    narration: str,
+    bible: VisualBible,
+    scene_visual: str = "",
+) -> str:
     constraints = "; ".join(bible.historical_constraints)
-    chars = "; ".join(f"{name}: {desc}" for name, desc in bible.characters.items())
+    chars = "; ".join(
+        f"{name}: {desc}" for name, desc in bible.characters.items()
+    )
     visual = scene_visual or narration
     parts = [
         visual,
@@ -71,36 +89,71 @@ def _prompt_for_scene(narration: str, bible: VisualBible, scene_visual: str = ""
         f"historical constraints: {constraints}" if constraints else "",
         f"avoid: {bible.negative_prompt}" if bible.negative_prompt else "",
     ]
-    return ", ".join(p for p in parts if p)
+    return ", ".join(part for part in parts if part)
 
 
 class SceneDirector:
     def __init__(self, llm_call: Callable[[str], str] | None = None):
         self.llm_call = llm_call
 
-    def plan(self, script: str, *, title: str = "Morrowglass Video", bible: VisualBible | None = None, target_scene_seconds: float = 6.0, words_per_second: float = 2.45, use_llm: bool = True) -> MorrowglassProject:
+    def plan(
+        self,
+        script: str,
+        *,
+        title: str = "Morrowglass Video",
+        bible: VisualBible | None = None,
+        target_scene_seconds: float = 6.0,
+        words_per_second: float = 2.45,
+        use_llm: bool = True,
+    ) -> MorrowglassProject:
         bible = bible or VisualBible()
         scenes = None
+
         if use_llm and self.llm_call:
             try:
-                scenes = self._plan_with_llm(script, bible, target_scene_seconds)
+                scenes = self._plan_with_llm(
+                    script,
+                    bible,
+                    target_scene_seconds,
+                )
             except Exception:
                 scenes = None
+
         if not scenes:
-            target_words = max(10, round(target_scene_seconds * words_per_second))
+            target_words = max(
+                10,
+                round(target_scene_seconds * words_per_second),
+            )
             chunks = split_script(script, target_words=target_words)
             scenes = [
                 Scene(
-                    scene_id=f"scene_{i:03d}", narration=chunk, visual_description=chunk,
+                    scene_id=f"scene_{index:03d}",
+                    narration=chunk,
+                    visual_description=chunk,
                     image_prompt=_prompt_for_scene(chunk, bible),
-                    motion_prompt="subtle cinematic camera movement, natural human motion, no morphing",
+                    motion_prompt=(
+                        "subtle cinematic camera movement, natural human motion, "
+                        "no morphing"
+                    ),
                     asset_type=AssetType.IMAGE,
                     historical_constraints=list(bible.historical_constraints),
-                ) for i, chunk in enumerate(chunks, 1)
+                )
+                for index, chunk in enumerate(chunks, 1)
             ]
-        return MorrowglassProject(title=title, script=script.strip(), scenes=scenes, visual_bible=bible)
 
-    def _plan_with_llm(self, script: str, bible: VisualBible, target_scene_seconds: float) -> list[Scene]:
+        return MorrowglassProject(
+            title=title,
+            script=script.strip(),
+            scenes=scenes,
+            visual_bible=bible,
+        )
+
+    def _plan_with_llm(
+        self,
+        script: str,
+        bible: VisualBible,
+        target_scene_seconds: float,
+    ) -> list[Scene]:
         prompt = f"""You are the scene director for a serious historical YouTube documentary.
 Turn the narration into chronological visual scenes. Every narration word must remain in order and be assigned exactly once. Do not rewrite facts.
 
@@ -120,28 +173,86 @@ Prefer image for exposition and image_to_video/video only for scenes where motio
 
 SCRIPT:
 {script.strip()}""".strip()
+
         raw = self.llm_call(prompt)
         payload = _extract_json(raw)
-        if isinstance(payload, dict): payload = payload.get("scenes")
-        if not isinstance(payload, list) or not payload: raise ValueError("scene director did not return a scene array")
+        if isinstance(payload, dict):
+            payload = payload.get("scenes")
+        if not isinstance(payload, list) or not payload:
+            raise ValueError("scene director did not return a scene array")
+
         scenes: list[Scene] = []
         concatenated = ""
-        for i, item in enumerate(payload, 1):
-            if not isinstance(item, dict): raise ValueError("invalid scene entry")
+
+        for index, item in enumerate(payload, 1):
+            if not isinstance(item, dict):
+                raise ValueError("invalid scene entry")
+
             narration = str(item.get("narration") or "").strip()
             visual = str(item.get("visual_description") or "").strip()
-            if not narration or not visual: raise ValueError("scene requires narration and visual_description")
-            try: asset_type = AssetType(str(item.get("asset_type") or "image"))
-            except ValueError: asset_type = AssetType.IMAGE
-            prompt_text = str(item.get("image_prompt") or "").strip() or _prompt_for_scene(narration, bible, visual)
-            constraints = item.get("historical_constraints") or bible.historical_constraints
-            if not isinstance(constraints, list): constraints = [str(constraints)]
-            scenes.append(Scene(scene_id=f"scene_{i:03d}", narration=narration, visual_description=visual, image_prompt=prompt_text, motion_prompt=str(item.get("motion_prompt") or "").strip(), asset_type=asset_type, historical_constraints=[str(x) for x in constraints]))
-            concatenated += (" " if concatenated else "") + narration
-        def norm(s: str) -> str: return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
-        src_tokens, out_tokens = norm(script).split(), norm(concatenated).split()
+            if not narration or not visual:
+                raise ValueError(
+                    "scene requires narration and visual_description"
+                )
+
+            try:
+                asset_type = AssetType(
+                    str(item.get("asset_type") or "image")
+                )
+            except ValueError:
+                asset_type = AssetType.IMAGE
+
+            prompt_text = (
+                str(item.get("image_prompt") or "").strip()
+                or _prompt_for_scene(narration, bible, visual)
+            )
+            constraints = (
+                item.get("historical_constraints")
+                or bible.historical_constraints
+            )
+            if not isinstance(constraints, list):
+                constraints = [str(constraints)]
+
+            scenes.append(
+                Scene(
+                    scene_id=f"scene_{index:03d}",
+                    narration=narration,
+                    visual_description=visual,
+                    image_prompt=prompt_text,
+                    motion_prompt=str(
+                        item.get("motion_prompt") or ""
+                    ).strip(),
+                    asset_type=asset_type,
+                    historical_constraints=[
+                        str(value) for value in constraints
+                    ],
+                )
+            )
+            if concatenated:
+                concatenated += " "
+            concatenated += narration
+
+        def norm(value: str) -> str:
+            return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+        src_tokens = norm(script).split()
+        out_tokens = norm(concatenated).split()
         if src_tokens:
-            overlap = sum(1 for a, b in zip(src_tokens, out_tokens) if a == b) / len(src_tokens)
+            overlap = (
+                sum(
+                    1
+                    for source, output in zip(src_tokens, out_tokens)
+                    if source == output
+                )
+                / len(src_tokens)
+            )
             length_ratio = len(out_tokens) / len(src_tokens)
-            if not (0.92 <= length_ratio <= 1.08 and overlap >= 0.80): raise ValueError("scene narration diverged from source script")
+            if not (
+                0.92 <= length_ratio <= 1.08
+                and overlap >= 0.80
+            ):
+                raise ValueError(
+                    "scene narration diverged from source script"
+                )
+
         return scenes
