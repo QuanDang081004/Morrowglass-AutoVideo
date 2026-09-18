@@ -66,11 +66,31 @@ def _llm_call(prompt: str) -> str:
     return llm._generate_response(prompt)
 
 
+def _external_ai_enabled() -> bool:
+    return os.getenv(
+        "MORROWGLASS_ALLOW_PAID_PROVIDERS",
+        "",
+    ).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _pipeline(
     use_llm: bool = True,
 ) -> MorrowglassPipeline:
+    allow_external = (
+        use_llm
+        and _external_ai_enabled()
+    )
     return MorrowglassPipeline(
-        llm_call=_llm_call if use_llm else None
+        llm_call=(
+            _llm_call
+            if allow_external
+            else None
+        )
     )
 
 
@@ -398,7 +418,6 @@ stored_image_provider = str(
 if stored_image_provider not in {
     "auto",
     "wikimedia",
-    "mpt_openai",
     "comfyui",
 }:
     stored_image_provider = "auto"
@@ -789,7 +808,6 @@ with st.sidebar:
         "auto",
         "wikimedia",
         "comfyui",
-        "mpt_openai",
     ]
     image_provider = st.selectbox(
         "Image provider",
@@ -798,9 +816,8 @@ with st.sidebar:
             stored_image_provider
         ),
         help=(
-            "auto is free-first: local ComfyUI when available, "
-            "otherwise Wikimedia Commons. Paid OpenAI-compatible "
-            "image generation is used only when selected explicitly."
+            "FREE-ONLY: local ComfyUI when available, otherwise "
+            "Wikimedia Commons. Paid image APIs are hidden and blocked."
         ),
     )
     comfyui_url = st.text_input(
