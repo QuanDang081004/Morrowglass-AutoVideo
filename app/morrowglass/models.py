@@ -7,6 +7,43 @@ from typing import Any
 import json
 
 
+ASPECT_RESOLUTIONS = {
+    "16:9": (1920, 1080),
+    "9:16": (1080, 1920),
+}
+
+
+def normalize_aspect(value: str | None) -> str:
+    aspect = str(value or "16:9").strip()
+    if aspect not in ASPECT_RESOLUTIONS:
+        raise ValueError(
+            "aspect must be 16:9 or 9:16"
+        )
+    return aspect
+
+
+def resolution_for_aspect(
+    value: str | None,
+) -> tuple[int, int]:
+    return ASPECT_RESOLUTIONS[
+        normalize_aspect(value)
+    ]
+
+
+def aspect_composition(
+    value: str | None,
+) -> str:
+    aspect = normalize_aspect(value)
+    if aspect == "9:16":
+        return (
+            "vertical 9:16 composition, mobile-first framing, "
+            "main subject kept inside the center safe area"
+        )
+    return (
+        "horizontal 16:9 composition, cinematic widescreen framing"
+    )
+
+
 class AssetMode(str, Enum):
     AUTO = "auto"
     HYBRID = "hybrid"
@@ -25,7 +62,7 @@ class AssetType(str, Enum):
 class VisualBible:
     style: str = (
         "cinematic historical documentary, photorealistic, natural muted colors, "
-        "realistic anatomy, atmospheric lighting, 16:9 composition"
+        "realistic anatomy, atmospheric lighting"
     )
     period: str = ""
     location: str = ""
@@ -72,6 +109,20 @@ class MorrowglassProject:
     resolution: tuple[int, int] = (1920, 1080)
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def set_aspect(
+        self,
+        aspect: str,
+    ) -> None:
+        normalized = normalize_aspect(
+            aspect
+        )
+        self.aspect = normalized
+        self.resolution = (
+            resolution_for_aspect(
+                normalized
+            )
+        )
+
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["asset_mode"] = self.asset_mode.value
@@ -95,7 +146,17 @@ class MorrowglassProject:
             item = dict(item)
             item["asset_type"] = AssetType(item.get("asset_type", AssetType.IMAGE.value))
             scenes.append(Scene(**item))
-        resolution = tuple(raw.get("resolution", (1920, 1080)))
+        aspect = normalize_aspect(
+            raw.get("aspect", "16:9")
+        )
+        resolution = tuple(
+            raw.get(
+                "resolution",
+                resolution_for_aspect(
+                    aspect
+                ),
+            )
+        )
         return cls(
             title=raw.get("title", "Morrowglass Video"),
             script=raw.get("script", ""),
@@ -103,7 +164,7 @@ class MorrowglassProject:
             visual_bible=bible,
             asset_mode=AssetMode(raw.get("asset_mode", AssetMode.AUTO.value)),
             voice_name=raw.get("voice_name", "kokoro-en:am_michael"),
-            aspect=raw.get("aspect", "16:9"),
+            aspect=aspect,
             resolution=(int(resolution[0]), int(resolution[1])),
             metadata=raw.get("metadata") or {},
         )
