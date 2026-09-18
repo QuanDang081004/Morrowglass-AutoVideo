@@ -10,7 +10,7 @@ echo.
 
 set "UV_RUN="
 where uv >nul 2>nul
-if not errorlevel 1 set "UV_RUN=uv run --python 3.11"
+if not errorlevel 1 set "UV_RUN=uv run --python 3.11 python"
 
 if not defined UV_RUN if exist ".venv\Scripts\python.exe" (
     set "UV_RUN=".venv\Scripts\python.exe""
