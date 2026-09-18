@@ -43,6 +43,7 @@ class Scene:
     narration: str
     visual_description: str
     image_prompt: str
+    search_query: str = ""
     motion_prompt: str = ""
     asset_type: AssetType = AssetType.IMAGE
     historical_constraints: list[str] = field(default_factory=list)
