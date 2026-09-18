@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -128,6 +130,64 @@ def _resolve_kokoro_python(
             f"{python_path}"
         )
     return python_path
+
+
+def narration_fingerprint(
+    project,
+    *,
+    voice_name: str | None = None,
+    voice_rate: float = 1.0,
+    voice_volume: float = 1.0,
+    kokoro_python: str | Path | None = None,
+    kokoro_en_python: str | Path | None = None,
+    kokoro_vi_python: str | Path | None = None,
+    kokoro_vi_device: str = "cpu",
+) -> str:
+    selected_voice = (
+        voice_name
+        or project.voice_name
+    )
+    engine = local_kokoro_engine(
+        selected_voice
+    )
+
+    selected_python = ""
+    if engine == "vietnamese":
+        selected_python = str(
+            kokoro_vi_python
+            or default_kokoro_vi_python()
+            or ""
+        )
+    elif engine == "english":
+        selected_python = str(
+            kokoro_en_python
+            or kokoro_python
+            or default_kokoro_en_python()
+            or ""
+        )
+
+    payload = {
+        "script": project.script,
+        "voice": selected_voice,
+        "rate": round(float(voice_rate), 6),
+        "volume": round(float(voice_volume), 6),
+        "engine": engine or "mpt",
+        "python": selected_python,
+        "vi_device": (
+            kokoro_vi_device
+            if engine == "vietnamese"
+            else ""
+        ),
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(
+        encoded
+    ).hexdigest()
 
 
 def _postprocess_local_audio(
@@ -368,6 +428,16 @@ def synthesize_narration(
         voice_name
         or project.voice_name
     )
+    tts_fingerprint = narration_fingerprint(
+        project,
+        voice_name=selected_voice,
+        voice_rate=voice_rate,
+        voice_volume=voice_volume,
+        kokoro_python=kokoro_python,
+        kokoro_en_python=kokoro_en_python,
+        kokoro_vi_python=kokoro_vi_python,
+        kokoro_vi_device=kokoro_vi_device,
+    )
 
     if is_local_kokoro_voice(
         selected_voice
@@ -434,6 +504,9 @@ def synthesize_narration(
     project.metadata[
         "audio_duration"
     ] = duration
+    project.metadata[
+        "tts_fingerprint"
+    ] = tts_fingerprint
     return output, duration
 
 
