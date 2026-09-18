@@ -188,28 +188,108 @@ def _generate_mpt_candidate(
     return source if source.is_file() else None
 
 
-def _generate_wikimedia_candidate(
+def _archive_query_variants(
     *,
     scene,
-    candidate_dir: Path,
-    attempt: int,
-):
-    query = (
-        str(getattr(scene, "search_query", "") or "").strip()
+    project: MorrowglassProject,
+) -> list[str]:
+    base = (
+        str(
+            getattr(
+                scene,
+                "search_query",
+                "",
+            )
+            or ""
+        ).strip()
         or scene.visual_description
         or scene.narration
     )
-    assets = search_wikimedia_images(
-        query,
-        limit=max(12, attempt + 8),
-        thumb_width=1920,
+    words = base.split()
+    short = " ".join(
+        words[:5]
+    ).strip()
+    context = " ".join(
+        value
+        for value in (
+            project.visual_bible.location,
+            project.visual_bible.period,
+            " ".join(words[:4]),
+        )
+        if str(value or "").strip()
+    ).strip()
+
+    variants: list[str] = []
+    for value in (
+        base,
+        short,
+        context,
+    ):
+        normalized = " ".join(
+            str(value or "").split()
+        ).strip()
+        if (
+            normalized
+            and normalized not in variants
+        ):
+            variants.append(
+                normalized
+            )
+    return variants
+
+
+def _generate_wikimedia_candidate(
+    *,
+    scene,
+    project: MorrowglassProject,
+    candidate_dir: Path,
+    attempt: int,
+):
+    queries = _archive_query_variants(
+        scene=scene,
+        project=project,
     )
+    assets = []
+    seen: set[str] = set()
+
+    for query in queries:
+        found = search_wikimedia_images(
+            query,
+            limit=max(
+                12,
+                attempt + 8,
+            ),
+            thumb_width=max(
+                project.resolution
+            ),
+        )
+        for asset in found:
+            key = (
+                asset.source_page
+                or asset.image_url
+                or asset.title
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            assets.append(asset)
+        if len(assets) >= max(
+            4,
+            attempt + 2,
+        ):
+            break
+
     if not assets:
         return None, None
 
+    base_query = (
+        queries[0]
+        if queries
+        else scene.narration
+    )
     assets = rank_archive_assets(
         assets,
-        query=query,
+        query=base_query,
         visual_description=(
             scene.visual_description
             or scene.narration
@@ -229,7 +309,6 @@ def _generate_wikimedia_candidate(
         target,
     )
     return downloaded, asset
-
 
 def _generate_comfyui_candidate(
     *,
@@ -299,12 +378,32 @@ def generate_missing_scene_images(
     comfy_client = None
     comfy_workflow_data = None
     if provider_name == "comfyui":
-        comfy_client = ComfyUIClient(comfyui_url)
+        comfy_client = ComfyUIClient(
+            comfyui_url
+        )
         if not comfy_client.ping():
-            raise ImageGenerationUnavailable(
-                f"ComfyUI is not reachable at {comfy_client.base_url}"
+            if (
+                str(provider or "auto")
+                .strip()
+                .lower()
+                == "auto"
+            ):
+                provider_name = (
+                    "wikimedia"
+                )
+                workflow_path = None
+                comfy_client = None
+            else:
+                raise ImageGenerationUnavailable(
+                    "ComfyUI is not reachable at "
+                    f"{comfy_client.base_url}"
+                )
+        else:
+            comfy_workflow_data = (
+                load_api_workflow(
+                    workflow_path
+                )
             )
-        comfy_workflow_data = load_api_workflow(workflow_path)
 
     failures: list[str] = []
     asset_sources = dict(
@@ -356,6 +455,7 @@ def generate_missing_scene_images(
                         archive_asset,
                     ) = _generate_wikimedia_candidate(
                         scene=scene,
+                        project=project,
                         candidate_dir=candidate_dir,
                         attempt=attempt,
                     )
