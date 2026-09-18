@@ -124,6 +124,7 @@ def synthesize_vietnamese(
     output: Path,
     voice: str,
     device: str = "cpu",
+    speed: float = 1.0,
 ) -> None:
     from kokoro_vietnamese import KokoroVietnamese
 
@@ -132,7 +133,8 @@ def synthesize_vietnamese(
         voice=voice,
     )
     audio, _phonemes = tts.synthesize(
-        text
+        text,
+        speed=float(speed),
     )
     array = _to_numpy(audio)
     if not array.size:
@@ -205,6 +207,7 @@ def main() -> int:
             output=output,
             voice=args.voice,
             device=args.device,
+            speed=args.speed,
         )
     else:
         synthesize_english(
