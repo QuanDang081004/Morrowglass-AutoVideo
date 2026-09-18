@@ -43,7 +43,6 @@ class Scene:
     narration: str
     visual_description: str
     image_prompt: str
-    search_query: str = ""
     motion_prompt: str = ""
     asset_type: AssetType = AssetType.IMAGE
     historical_constraints: list[str] = field(default_factory=list)
@@ -52,6 +51,7 @@ class Scene:
     asset_path: str = ""
     qc_score: float | None = None
     qc_notes: list[str] = field(default_factory=list)
+    search_query: str = ""
 
     @property
     def duration(self) -> float | None:
