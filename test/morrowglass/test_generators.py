@@ -9,6 +9,7 @@ from app.models.schema import MaterialInfo
 from app.morrowglass.archive import ArchiveAsset
 from app.morrowglass.generators import (
     ImageGenerationUnavailable,
+    _archive_query_variants,
     _motion_source_fingerprint,
     _resolve_image_provider,
     _scene_seed,
@@ -97,6 +98,63 @@ class GeneratorTests(unittest.TestCase):
                 "a precise historical image",
                 generate.call_args.kwargs["search_term"],
             )
+
+    def test_archive_query_variants_add_museum_language(self):
+        project = MorrowglassProject(
+            "x",
+            (
+                "Ancient Rome funeral actors mask. "
+                "Ancient Rome funeral procession family history."
+            ),
+            [
+                Scene(
+                    "scene_003",
+                    "Ancient Rome funeral actors mask.",
+                    "Roman funeral actors",
+                    "Roman funeral actors mask",
+                    search_query=(
+                        "Ancient Rome funeral actors mask"
+                    ),
+                ),
+                Scene(
+                    "scene_004",
+                    "Ancient Rome funeral procession family history.",
+                    "Roman family funeral procession",
+                    "Roman family funeral procession",
+                    search_query=(
+                        "Ancient Rome funeral procession family history"
+                    ),
+                ),
+            ],
+        )
+
+        scene3 = _archive_query_variants(
+            scene=project.scenes[0],
+            project=project,
+        )
+        scene4 = _archive_query_variants(
+            scene=project.scenes[1],
+            project=project,
+        )
+
+        self.assertTrue(
+            any(
+                "funerary relief" in item
+                for item in scene3
+            )
+        )
+        self.assertTrue(
+            any(
+                "funerary mask" in item
+                for item in scene3
+            )
+        )
+        self.assertTrue(
+            any(
+                "family tomb relief" in item
+                for item in scene4
+            )
+        )
 
     def test_paid_image_provider_is_blocked_by_default(self):
         with (
@@ -231,6 +289,11 @@ class GeneratorTests(unittest.TestCase):
                     "search_openverse_images",
                     return_value=[],
                 ),
+                patch(
+                    "app.morrowglass.generators."
+                    "search_met_images",
+                    return_value=[],
+                ),
             ):
                 failures = generate_missing_scene_images(
                     project,
@@ -329,6 +392,11 @@ class GeneratorTests(unittest.TestCase):
                     "search_openverse_images",
                     return_value=[],
                 ),
+                patch(
+                    "app.morrowglass.generators."
+                    "search_met_images",
+                    return_value=[],
+                ),
             ):
                 failures = generate_missing_scene_images(
                     project,
@@ -421,6 +489,87 @@ class GeneratorTests(unittest.TestCase):
                 "asset_sources"
             ]["scene_001"]["provider"],
             "openverse",
+        )
+
+    def test_met_fallback_fills_scene_when_other_archives_miss(self):
+        asset = ArchiveAsset(
+            title="Roman funerary relief",
+            image_url="https://example.com/met.jpg",
+            source_page=(
+                "https://www.metmuseum.org/art/collection/search/123"
+            ),
+            license_name="Public Domain",
+            license_url="https://www.metmuseum.org/about-the-met/policies-and-documents/open-access",
+            artist="",
+            description=(
+                "Roman Imperial funerary relief family procession"
+            ),
+            provider="metmuseum",
+        )
+        project = MorrowglassProject(
+            "x",
+            "Ancient Rome funeral procession family history.",
+            [
+                Scene(
+                    "scene_001",
+                    "Ancient Rome funeral procession family history.",
+                    "Roman funeral procession",
+                    "Roman funeral procession family",
+                    search_query=(
+                        "Ancient Rome funeral procession family history"
+                    ),
+                )
+            ],
+        )
+
+        def fake_download(_asset, target, **_kwargs):
+            target = Path(target)
+            Image.new(
+                "RGB",
+                (1280, 720),
+                (90, 100, 110),
+            ).save(target)
+            return target
+
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch(
+                    "app.morrowglass.generators."
+                    "search_wikimedia_images",
+                    return_value=[],
+                ),
+                patch(
+                    "app.morrowglass.generators."
+                    "search_openverse_images",
+                    return_value=[],
+                ),
+                patch(
+                    "app.morrowglass.generators."
+                    "search_met_images",
+                    return_value=[asset],
+                ),
+                patch(
+                    "app.morrowglass.generators."
+                    "download_archive_image",
+                    side_effect=fake_download,
+                ),
+            ):
+                failures = generate_missing_scene_images(
+                    project,
+                    directory,
+                    provider="wikimedia",
+                    semantic_qc=False,
+                )
+
+        self.assertEqual(
+            failures,
+            [],
+        )
+        self.assertEqual(
+            project.metadata[
+                "asset_sources"
+            ]["scene_001"]["provider"],
+            "metmuseum",
         )
 
     def test_comfyui_image_provider_uses_scene_prompt(self):
