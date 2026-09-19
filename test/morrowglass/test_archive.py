@@ -1,10 +1,12 @@
 import unittest
+from unittest.mock import Mock, patch
 
 from app.morrowglass.archive import (
     ArchiveAsset,
     archive_asset_keys,
     rank_archive_assets,
     relevance_score,
+    search_openverse_images,
 )
 
 
@@ -77,6 +79,68 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(
             ranked,
             [mask],
+        )
+
+    def test_openverse_keeps_only_commercially_usable_licenses(self):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "results": [
+                {
+                    "id": "good",
+                    "title": "Roman funeral mask",
+                    "url": "https://example.com/good.jpg",
+                    "thumbnail": "https://example.com/good-thumb.jpg",
+                    "foreign_landing_url": "https://example.com/good",
+                    "license": "by",
+                    "license_version": "4.0",
+                    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                    "creator": "Museum",
+                    "watermarked": False,
+                    "meta_data": {
+                        "description": "Roman ancestor funerary mask",
+                    },
+                    "tags": [
+                        {"name": "Roman"},
+                        {"name": "mask"},
+                    ],
+                },
+                {
+                    "id": "blocked",
+                    "title": "NC image",
+                    "url": "https://example.com/nc.jpg",
+                    "foreign_landing_url": "https://example.com/nc",
+                    "license": "by-nc",
+                    "license_version": "4.0",
+                    "creator": "Someone",
+                    "watermarked": False,
+                },
+            ]
+        }
+
+        with patch(
+            "app.morrowglass.archive.requests.get",
+            return_value=response,
+        ):
+            results = search_openverse_images(
+                "Roman funeral mask",
+            )
+
+        self.assertEqual(
+            len(results),
+            1,
+        )
+        self.assertEqual(
+            results[0].provider,
+            "openverse",
+        )
+        self.assertEqual(
+            results[0].source_page,
+            "https://example.com/good",
+        )
+        self.assertIn(
+            "Roman ancestor funerary mask",
+            results[0].description,
         )
 
     def test_ranking_prefers_scene_relevant_metadata(self):
