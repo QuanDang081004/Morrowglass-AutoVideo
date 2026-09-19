@@ -19,6 +19,7 @@ from .archive import (
     download_archive_image,
     rank_archive_assets,
     relevance_score,
+    search_met_images,
     search_openverse_images,
     search_wikimedia_images,
     write_attribution_file,
@@ -215,10 +216,10 @@ def _archive_query_variants(
         ),
     )
     words = base.split()
+    tokens = archive_text_tokens(
+        base
+    )
 
-    short = " ".join(
-        words[:5]
-    ).strip()
     context = build_archive_query(
         "",
         script=project.script,
@@ -227,6 +228,19 @@ def _archive_query_variants(
         existing_query="",
         max_terms=3,
     )
+    context_words = context.split()
+    context_prefix = " ".join(
+        context_words[:2]
+    ).strip()
+    if not context_prefix:
+        context_prefix = (
+            " ".join(words[:2])
+            .strip()
+        )
+
+    short = " ".join(
+        words[:5]
+    ).strip()
     context_specific = " ".join(
         value
         for value in (
@@ -236,11 +250,46 @@ def _archive_query_variants(
         if value
     ).strip()
 
+    museum_variants: list[str] = []
+    if "funeral" in tokens:
+        museum_variants.extend(
+            [
+                f"{context_prefix} funerary relief",
+                f"{context_prefix} funerary monument",
+                f"{context_prefix} funeral procession",
+            ]
+        )
+    if "mask" in tokens:
+        museum_variants.extend(
+            [
+                f"{context_prefix} funerary mask",
+                f"{context_prefix} ancestor portrait",
+            ]
+        )
+    if "family" in tokens:
+        museum_variants.extend(
+            [
+                f"{context_prefix} family tomb relief",
+                f"{context_prefix} funerary family relief",
+            ]
+        )
+    if (
+        "actor" in tokens
+        and "mask" in tokens
+    ):
+        museum_variants.extend(
+            [
+                f"{context_prefix} ritual mask",
+                f"{context_prefix} ceremonial mask",
+            ]
+        )
+
     variants: list[str] = []
     for value in (
         base,
         short,
         context_specific,
+        *museum_variants,
         context,
     ):
         normalized = " ".join(
@@ -283,6 +332,14 @@ def _collect_archive_results(
                 limit=max(
                     20,
                     attempt + 12,
+                ),
+            )
+        elif provider == "metmuseum":
+            found = search_met_images(
+                query,
+                limit=max(
+                    12,
+                    attempt + 8,
                 ),
             )
         else:
@@ -437,6 +494,29 @@ def _generate_wikimedia_candidate(
         except Exception as exc:
             provider_errors.append(
                 "Openverse: "
+                f"{type(exc).__name__}: {exc}"
+            )
+
+    if asset is None:
+        try:
+            met_assets = (
+                _collect_archive_results(
+                    queries,
+                    provider="metmuseum",
+                    project=project,
+                    attempt=attempt,
+                )
+            )
+            asset = _pick_archive_asset(
+                met_assets,
+                scene=scene,
+                base_query=base_query,
+                required_terms=required_terms,
+                excluded_asset_keys=excluded,
+            )
+        except Exception as exc:
+            provider_errors.append(
+                "The Met: "
                 f"{type(exc).__name__}: {exc}"
             )
 
