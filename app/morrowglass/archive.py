@@ -73,16 +73,38 @@ def _license_is_reusable(
     )
 
 
+_TOKEN_ALIASES = {
+    "rome": "roman",
+    "romans": "roman",
+    "funerary": "funeral",
+    "funerals": "funeral",
+    "masks": "mask",
+    "ancestors": "ancestor",
+    "actors": "actor",
+    "families": "family",
+    "soldiers": "soldier",
+    "warriors": "warrior",
+    "tombs": "tomb",
+    "temples": "temple",
+    "statues": "statue",
+}
+
+
 def _tokens(value: str) -> set[str]:
-    return {
-        token
-        for token in re.findall(
-            r"[^\W_][\w'-]*",
-            (value or "").lower(),
-            flags=re.UNICODE,
+    tokens = set()
+    for token in re.findall(
+        r"[^\W_][\w'-]*",
+        (value or "").lower(),
+        flags=re.UNICODE,
+    ):
+        if len(token) < 3:
+            continue
+        canonical = _TOKEN_ALIASES.get(
+            token,
+            token,
         )
-        if len(token) >= 3
-    }
+        tokens.add(canonical)
+    return tokens
 
 
 def relevance_score(
