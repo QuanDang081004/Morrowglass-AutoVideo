@@ -12,6 +12,7 @@ from PIL import Image
 
 
 WIKIMEDIA_API = "https://commons.wikimedia.org/w/api.php"
+OPENVERSE_API = "https://api.openverse.org/v1/images/"
 _USER_AGENT = (
     "MorrowglassAutoVideo/1.0 "
     "(historical documentary asset fetcher)"
@@ -36,6 +37,8 @@ class ArchiveAsset:
     license_url: str
     artist: str
     description: str = ""
+    provider: str = "wikimedia"
+    fallback_url: str = ""
 
 
 def _metadata_value(
@@ -479,6 +482,210 @@ def search_wikimedia_images(
     return results
 
 
+_OPENVERSE_COMMERCIAL_LICENSES = {
+    "cc0",
+    "pdm",
+    "by",
+    "by-sa",
+}
+
+
+def _openverse_description(
+    item: dict[str, Any],
+) -> str:
+    parts: list[str] = []
+    meta = item.get(
+        "meta_data"
+    )
+    if isinstance(meta, dict):
+        description = meta.get(
+            "description"
+        )
+        if description:
+            parts.append(
+                str(description)
+            )
+
+    tags = item.get("tags")
+    if isinstance(tags, list):
+        tag_names = []
+        for tag in tags[:20]:
+            if isinstance(tag, dict):
+                name = str(
+                    tag.get("name")
+                    or ""
+                ).strip()
+                if name:
+                    tag_names.append(
+                        name
+                    )
+        if tag_names:
+            parts.append(
+                " ".join(tag_names)
+            )
+    return _plain_text(
+        " ".join(parts)
+    )
+
+
+def search_openverse_images(
+    query: str,
+    *,
+    limit: int = 20,
+    timeout: float = 30.0,
+) -> list[ArchiveAsset]:
+    query = re.sub(
+        r"\s+",
+        " ",
+        query or "",
+    ).strip()
+    if not query:
+        return []
+
+    response = requests.get(
+        OPENVERSE_API,
+        params={
+            "q": query,
+            "page_size": str(
+                max(
+                    1,
+                    min(
+                        int(limit),
+                        50,
+                    ),
+                )
+            ),
+        },
+        headers={
+            "User-Agent": _USER_AGENT,
+        },
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    raw_results = payload.get(
+        "results",
+        [],
+    )
+    if not isinstance(
+        raw_results,
+        list,
+    ):
+        return []
+
+    results: list[ArchiveAsset] = []
+    for item in raw_results:
+        if not isinstance(
+            item,
+            dict,
+        ):
+            continue
+        if bool(
+            item.get("watermarked")
+        ):
+            continue
+
+        license_slug = str(
+            item.get("license")
+            or ""
+        ).strip().lower()
+        if (
+            license_slug
+            not in _OPENVERSE_COMMERCIAL_LICENSES
+        ):
+            continue
+
+        image_url = str(
+            item.get("url")
+            or ""
+        ).strip()
+        thumbnail = str(
+            item.get("thumbnail")
+            or ""
+        ).strip()
+        if not image_url.startswith(
+            ("http://", "https://")
+        ):
+            image_url = thumbnail
+            thumbnail = ""
+        if not image_url.startswith(
+            ("http://", "https://")
+        ):
+            continue
+
+        source_page = str(
+            item.get(
+                "foreign_landing_url"
+            )
+            or ""
+        ).strip()
+        if not source_page:
+            identifier = str(
+                item.get("id")
+                or ""
+            ).strip()
+            if identifier:
+                source_page = (
+                    "https://openverse.org/image/"
+                    + identifier
+                )
+
+        license_version = str(
+            item.get(
+                "license_version"
+            )
+            or ""
+        ).strip()
+        license_name = (
+            license_slug.upper()
+            if not license_version
+            else (
+                license_slug.upper()
+                + " "
+                + license_version
+            )
+        )
+
+        results.append(
+            ArchiveAsset(
+                title=str(
+                    item.get("title")
+                    or ""
+                ).strip(),
+                image_url=image_url,
+                source_page=source_page,
+                license_name=license_name,
+                license_url=str(
+                    item.get(
+                        "license_url"
+                    )
+                    or ""
+                ).strip(),
+                artist=str(
+                    item.get("creator")
+                    or ""
+                ).strip(),
+                description=(
+                    _openverse_description(
+                        item
+                    )
+                ),
+                provider="openverse",
+                fallback_url=(
+                    thumbnail
+                    if thumbnail.startswith(
+                        (
+                            "http://",
+                            "https://",
+                        )
+                    )
+                    else ""
+                ),
+            )
+        )
+    return results
+
+
 def download_archive_image(
     asset: ArchiveAsset,
     target: str | Path,
@@ -490,20 +697,47 @@ def download_archive_image(
         parents=True,
         exist_ok=True,
     )
-    response = requests.get(
-        asset.image_url,
-        headers={
-            "User-Agent": _USER_AGENT,
-        },
-        timeout=timeout,
-    )
-    response.raise_for_status()
+    urls = [
+        value
+        for value in (
+            asset.image_url,
+            asset.fallback_url,
+        )
+        if value
+    ]
+    if not urls:
+        raise RuntimeError(
+            "archive asset has no downloadable URL"
+        )
+
+    content: bytes | None = None
+    last_error: Exception | None = None
+    for url in urls:
+        try:
+            response = requests.get(
+                url,
+                headers={
+                    "User-Agent": _USER_AGENT,
+                },
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            content = response.content
+            if content:
+                break
+        except Exception as exc:
+            last_error = exc
+
+    if not content:
+        raise RuntimeError(
+            "archive image download failed"
+        ) from last_error
 
     temp = target.with_suffix(
         ".download"
     )
     temp.write_bytes(
-        response.content
+        content
     )
 
     try:
@@ -551,7 +785,7 @@ def attribution_record(
     asset: ArchiveAsset,
 ) -> dict[str, str]:
     return {
-        "provider": "wikimedia",
+        "provider": asset.provider,
         "title": asset.title,
         "image_url": asset.image_url,
         "source_page": asset.source_page,
