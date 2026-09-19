@@ -46,6 +46,39 @@ class QueryLanguageTests(unittest.TestCase):
             query,
         )
 
+    def test_roman_funeral_actor_scene_is_distinct(self):
+        mask_query = build_archive_query(
+            (
+                "Một số gia đình giàu có lưu giữ những chiếc mặt nạ "
+                "sáp có hình dáng giống tổ tiên đã qua đời."
+            ),
+            script=SCRIPT,
+        )
+        funeral_query = build_archive_query(
+            (
+                "Trong các tang lễ quan trọng, diễn viên có thể đeo "
+                "những chiếc mặt nạ này để đại diện cho nhiều thế hệ "
+                "người đã khuất."
+            ),
+            script=SCRIPT,
+        )
+        self.assertNotEqual(
+            mask_query,
+            funeral_query,
+        )
+        self.assertIn(
+            "funeral",
+            funeral_query,
+        )
+        self.assertIn(
+            "actors",
+            funeral_query,
+        )
+        self.assertIn(
+            "mask",
+            funeral_query,
+        )
+
     def test_funeral_scene_keeps_global_roman_context(self):
         query = build_archive_query(
             (
