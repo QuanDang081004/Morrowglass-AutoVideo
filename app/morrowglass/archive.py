@@ -13,6 +13,9 @@ from PIL import Image
 
 WIKIMEDIA_API = "https://commons.wikimedia.org/w/api.php"
 OPENVERSE_API = "https://api.openverse.org/v1/images/"
+MET_COLLECTION_API = (
+    "https://collectionapi.metmuseum.org/public/collection"
+)
 _USER_AGENT = (
     "MorrowglassAutoVideo/1.0 "
     "(historical documentary asset fetcher)"
@@ -683,6 +686,221 @@ def search_openverse_images(
                 ),
             )
         )
+    return results
+
+
+def _met_description(
+    item: dict[str, Any],
+) -> str:
+    parts: list[str] = []
+    for key in (
+        "title",
+        "objectName",
+        "culture",
+        "period",
+        "dynasty",
+        "reign",
+        "objectDate",
+        "medium",
+        "classification",
+        "country",
+        "region",
+        "city",
+        "excavation",
+    ):
+        value = str(
+            item.get(key)
+            or ""
+        ).strip()
+        if value:
+            parts.append(value)
+
+    tags = item.get("tags")
+    if isinstance(tags, list):
+        for tag in tags[:20]:
+            if isinstance(tag, dict):
+                term = str(
+                    tag.get("term")
+                    or ""
+                ).strip()
+                if term:
+                    parts.append(term)
+
+    return _plain_text(
+        " ".join(parts)
+    )
+
+
+def search_met_images(
+    query: str,
+    *,
+    limit: int = 12,
+    timeout: float = 30.0,
+) -> list[ArchiveAsset]:
+    query = re.sub(
+        r"\s+",
+        " ",
+        query or "",
+    ).strip()
+    if not query:
+        return []
+
+    page_limit = max(
+        1,
+        min(
+            int(limit),
+            30,
+        ),
+    )
+    search_response = requests.get(
+        (
+            MET_COLLECTION_API
+            + "/v1.1/search"
+        ),
+        params={
+            "q": query,
+            "hasImages": "true",
+            "offset": "0",
+            "limit": str(
+                page_limit
+            ),
+        },
+        headers={
+            "User-Agent": _USER_AGENT,
+        },
+        timeout=timeout,
+    )
+    search_response.raise_for_status()
+    payload = search_response.json()
+    object_ids = payload.get(
+        "objectIDs",
+        [],
+    )
+    if not isinstance(
+        object_ids,
+        list,
+    ):
+        return []
+
+    results: list[ArchiveAsset] = []
+    for object_id in object_ids[
+        :page_limit
+    ]:
+        try:
+            response = requests.get(
+                (
+                    MET_COLLECTION_API
+                    + "/v1/objects/"
+                    + str(
+                        int(object_id)
+                    )
+                ),
+                headers={
+                    "User-Agent": (
+                        _USER_AGENT
+                    ),
+                },
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            item = response.json()
+        except Exception:
+            continue
+
+        if not isinstance(
+            item,
+            dict,
+        ):
+            continue
+        if not bool(
+            item.get(
+                "isPublicDomain"
+            )
+        ):
+            continue
+
+        image_url = str(
+            item.get(
+                "primaryImage"
+            )
+            or item.get(
+                "primaryImageSmall"
+            )
+            or ""
+        ).strip()
+        fallback = str(
+            item.get(
+                "primaryImageSmall"
+            )
+            or ""
+        ).strip()
+        if not image_url.startswith(
+            (
+                "http://",
+                "https://",
+            )
+        ):
+            continue
+
+        source_page = str(
+            item.get("objectURL")
+            or ""
+        ).strip()
+        if not source_page:
+            source_page = (
+                "https://www.metmuseum.org/art/collection/search/"
+                + str(object_id)
+            )
+
+        artist = str(
+            item.get(
+                "artistDisplayName"
+            )
+            or item.get(
+                "artistAlphaSort"
+            )
+            or ""
+        ).strip()
+
+        results.append(
+            ArchiveAsset(
+                title=str(
+                    item.get("title")
+                    or item.get(
+                        "objectName"
+                    )
+                    or ""
+                ).strip(),
+                image_url=image_url,
+                source_page=source_page,
+                license_name=(
+                    "Public Domain"
+                ),
+                license_url=(
+                    "https://www.metmuseum.org/"
+                    "about-the-met/policies-and-documents/"
+                    "open-access"
+                ),
+                artist=artist,
+                description=(
+                    _met_description(
+                        item
+                    )
+                ),
+                provider="metmuseum",
+                fallback_url=(
+                    fallback
+                    if fallback.startswith(
+                        (
+                            "http://",
+                            "https://",
+                        )
+                    )
+                    else ""
+                ),
+            )
+        )
+
     return results
 
 
