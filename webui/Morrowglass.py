@@ -381,6 +381,7 @@ def _auto_images(
     project: MorrowglassProject,
     project_dir: Path,
     *,
+    overwrite: bool = False,
     attempts: int,
     min_qc_score: float,
     semantic_qc: bool,
@@ -393,6 +394,7 @@ def _auto_images(
     ).auto_generate_images(
         project,
         project_dir,
+        overwrite=overwrite,
         semantic_qc=semantic_qc,
         min_qc_score=min_qc_score,
         max_attempts=attempts,
@@ -1161,6 +1163,16 @@ full_clicked = action_cols[4].button(
     use_container_width=True,
 )
 
+regenerate_assets_clicked = st.button(
+    "↻ Regenerate all assets",
+    use_container_width=True,
+    help=(
+        "Delete existing scene images/videos and rebuild them "
+        "with the current AUTO asset logic. Narration and timing "
+        "are preserved."
+    ),
+)
+
 try:
     if plan_clicked:
         if not script.strip():
@@ -1277,13 +1289,43 @@ try:
                 "timing are ready."
             )
 
-    if assets_clicked:
+    if (
+        assets_clicked
+        or regenerate_assets_clicked
+    ):
         project = _load_project(
             project_dir
         )
         if not project:
             st.error("Plan scenes first.")
         else:
+            if regenerate_assets_clicked:
+                for scene in project.scenes:
+                    _delete_scene_assets(
+                        project_dir,
+                        scene.scene_id,
+                    )
+                    scene.asset_path = ""
+                project.metadata[
+                    "asset_sources"
+                ] = {}
+                project.metadata[
+                    "video_sources"
+                ] = {}
+                project.metadata[
+                    "image_generation_failures"
+                ] = []
+                project.metadata[
+                    "video_generation_failures"
+                ] = []
+                project.save(
+                    manifest
+                )
+                st.info(
+                    "Existing scene assets cleared. "
+                    "Rebuilding all scenes with current AUTO logic..."
+                )
+
             _save_ui_settings(
                 project,
                 manifest,
@@ -1312,6 +1354,9 @@ try:
                 failures = _auto_images(
                     project,
                     project_dir,
+                    overwrite=(
+                        regenerate_assets_clicked
+                    ),
                     attempts=image_attempts,
                     min_qc_score=float(
                         min_qc_score
