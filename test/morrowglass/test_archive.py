@@ -6,6 +6,7 @@ from app.morrowglass.archive import (
     archive_asset_keys,
     rank_archive_assets,
     relevance_score,
+    search_met_images,
     search_openverse_images,
 )
 
@@ -141,6 +142,83 @@ class ArchiveTests(unittest.TestCase):
         self.assertIn(
             "Roman ancestor funerary mask",
             results[0].description,
+        )
+
+    def test_met_provider_keeps_only_public_domain_images(self):
+        search_response = Mock()
+        search_response.raise_for_status.return_value = None
+        search_response.json.return_value = {
+            "total": 2,
+            "objectIDs": [
+                101,
+                202,
+            ],
+        }
+
+        public_object = Mock()
+        public_object.raise_for_status.return_value = None
+        public_object.json.return_value = {
+            "objectID": 101,
+            "isPublicDomain": True,
+            "primaryImage": "https://example.com/met.jpg",
+            "primaryImageSmall": "https://example.com/met-small.jpg",
+            "objectURL": "https://www.metmuseum.org/art/collection/search/101",
+            "title": "Roman funerary relief",
+            "objectName": "Relief",
+            "culture": "Roman",
+            "period": "Imperial",
+            "objectDate": "1st century",
+            "medium": "Marble",
+            "classification": "Stone Sculpture",
+            "artistDisplayName": "",
+            "tags": [
+                {"term": "Funerary"},
+                {"term": "Family"},
+            ],
+        }
+
+        protected_object = Mock()
+        protected_object.raise_for_status.return_value = None
+        protected_object.json.return_value = {
+            "objectID": 202,
+            "isPublicDomain": False,
+            "primaryImage": "https://example.com/no.jpg",
+            "title": "Protected work",
+        }
+
+        with patch(
+            "app.morrowglass.archive.requests.get",
+            side_effect=[
+                search_response,
+                public_object,
+                protected_object,
+            ],
+        ):
+            results = search_met_images(
+                "Roman funerary relief",
+                limit=2,
+            )
+
+        self.assertEqual(
+            len(results),
+            1,
+        )
+        asset = results[0]
+        self.assertEqual(
+            asset.provider,
+            "metmuseum",
+        )
+        self.assertEqual(
+            asset.license_name,
+            "Public Domain",
+        )
+        self.assertIn(
+            "Roman",
+            asset.description,
+        )
+        self.assertIn(
+            "Funerary",
+            asset.description,
         )
 
     def test_ranking_prefers_scene_relevant_metadata(self):
