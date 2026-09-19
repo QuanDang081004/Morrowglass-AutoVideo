@@ -5,6 +5,7 @@ from html import unescape
 from pathlib import Path
 import re
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 from PIL import Image
@@ -107,6 +108,129 @@ def _tokens(value: str) -> set[str]:
     return tokens
 
 
+def archive_text_tokens(
+    value: str,
+) -> set[str]:
+    return _tokens(value)
+
+
+def _normalized_title(
+    value: str,
+) -> str:
+    return re.sub(
+        r"[^a-z0-9]+",
+        " ",
+        (value or "").lower(),
+    ).strip()
+
+
+def _normalized_url(
+    value: str,
+) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    try:
+        parts = urlsplit(raw)
+        return urlunsplit(
+            (
+                parts.scheme.lower(),
+                parts.netloc.lower(),
+                parts.path,
+                "",
+                "",
+            )
+        )
+    except Exception:
+        return raw.lower()
+
+
+def archive_asset_keys(
+    asset: ArchiveAsset,
+) -> set[str]:
+    keys: set[str] = set()
+    source = _normalized_url(
+        asset.source_page
+    )
+    image = _normalized_url(
+        asset.image_url
+    )
+    title = _normalized_title(
+        asset.title
+    )
+    if source:
+        keys.add(
+            f"source:{source}"
+        )
+    if image:
+        keys.add(
+            f"image:{image}"
+        )
+    if title:
+        keys.add(
+            f"title:{title}"
+        )
+    return keys
+
+
+def archive_record_keys(
+    record: dict[str, str],
+) -> set[str]:
+    keys: set[str] = set()
+    source = _normalized_url(
+        str(
+            record.get(
+                "source_page",
+                "",
+            )
+        )
+    )
+    image = _normalized_url(
+        str(
+            record.get(
+                "image_url",
+                "",
+            )
+        )
+    )
+    title = _normalized_title(
+        str(
+            record.get(
+                "title",
+                "",
+            )
+        )
+    )
+    if source:
+        keys.add(
+            f"source:{source}"
+        )
+    if image:
+        keys.add(
+            f"image:{image}"
+        )
+    if title:
+        keys.add(
+            f"title:{title}"
+        )
+    return keys
+
+
+def archive_metadata_tokens(
+    asset: ArchiveAsset,
+) -> set[str]:
+    return _tokens(
+        " ".join(
+            value
+            for value in (
+                asset.title,
+                asset.description,
+            )
+            if value
+        )
+    )
+
+
 def relevance_score(
     asset: ArchiveAsset,
     query: str,
@@ -158,9 +282,48 @@ def rank_archive_assets(
     *,
     query: str,
     visual_description: str = "",
+    excluded_keys: set[str] | None = None,
+    required_terms: set[str] | None = None,
 ) -> list[ArchiveAsset]:
+    excluded_keys = (
+        excluded_keys
+        or set()
+    )
+    required_terms = (
+        required_terms
+        or set()
+    )
+
+    eligible: list[
+        ArchiveAsset
+    ] = []
+    for asset in assets:
+        if (
+            archive_asset_keys(
+                asset
+            )
+            & excluded_keys
+        ):
+            continue
+
+        if required_terms:
+            metadata_terms = (
+                archive_metadata_tokens(
+                    asset
+                )
+            )
+            if not (
+                metadata_terms
+                & required_terms
+            ):
+                continue
+
+        eligible.append(
+            asset
+        )
+
     return sorted(
-        assets,
+        eligible,
         key=lambda asset: (
             relevance_score(
                 asset,
@@ -390,6 +553,7 @@ def attribution_record(
     return {
         "provider": "wikimedia",
         "title": asset.title,
+        "image_url": asset.image_url,
         "source_page": asset.source_page,
         "license": asset.license_name,
         "license_url": asset.license_url,
