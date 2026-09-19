@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import mimetypes
 import os
@@ -12,7 +13,7 @@ from urllib.parse import urlparse
 import requests
 from PIL import Image
 
-from .models import Scene
+from .models import MorrowglassProject, Scene
 
 
 @dataclass(slots=True)
@@ -20,6 +21,132 @@ class QCResult:
     passed: bool
     score: float | None = None
     notes: list[str] = field(default_factory=list)
+
+
+def _asset_file_sha256(
+    path: Path,
+) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(
+            lambda: handle.read(
+                1024 * 1024
+            ),
+            b"",
+        ):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def duplicate_scene_asset_groups(
+    project: MorrowglassProject,
+) -> list[list[str]]:
+    buckets: dict[
+        str,
+        set[str],
+    ] = {}
+
+    source_records = (
+        project.metadata.get(
+            "asset_sources"
+        )
+        or {}
+    )
+    for scene in project.scenes:
+        identities: set[str] = set()
+        if scene.asset_path:
+            path = Path(
+                scene.asset_path
+            )
+            if path.is_file():
+                try:
+                    identities.add(
+                        "sha256:"
+                        + _asset_file_sha256(
+                            path
+                        )
+                    )
+                except OSError:
+                    pass
+
+        record = (
+            source_records.get(
+                scene.scene_id
+            )
+            if isinstance(
+                source_records,
+                dict,
+            )
+            else None
+        )
+        if isinstance(
+            record,
+            dict,
+        ):
+            for field_name in (
+                "source_page",
+                "image_url",
+            ):
+                value = str(
+                    record.get(
+                        field_name,
+                        "",
+                    )
+                    or ""
+                ).strip().lower()
+                if value:
+                    identities.add(
+                        f"{field_name}:{value}"
+                    )
+
+        for identity in identities:
+            buckets.setdefault(
+                identity,
+                set(),
+            ).add(
+                scene.scene_id
+            )
+
+    unique_groups: set[
+        tuple[str, ...]
+    ] = set()
+    for scene_ids in buckets.values():
+        if len(scene_ids) > 1:
+            unique_groups.add(
+                tuple(
+                    sorted(
+                        scene_ids
+                    )
+                )
+            )
+
+    return sorted(
+        [
+            list(group)
+            for group in unique_groups
+        ],
+        key=lambda group: (
+            group[0],
+            len(group),
+            group,
+        ),
+    )
+
+
+def duplicate_scene_ids(
+    project: MorrowglassProject,
+) -> list[str]:
+    ids: set[str] = set()
+    for group in (
+        duplicate_scene_asset_groups(
+            project
+        )
+    ):
+        # Keep the earliest scene and regenerate later duplicates.
+        ids.update(
+            group[1:]
+        )
+    return sorted(ids)
 
 
 def technical_image_qc(
