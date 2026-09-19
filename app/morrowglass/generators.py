@@ -11,9 +11,13 @@ from app.models.schema import VideoAspect
 from app.services import material
 
 from .archive import (
+    archive_asset_keys,
+    archive_record_keys,
+    archive_text_tokens,
     attribution_record,
     download_archive_image,
     rank_archive_assets,
+    relevance_score,
     search_wikimedia_images,
     write_attribution_file,
 )
@@ -255,38 +259,42 @@ def _generate_wikimedia_candidate(
     project: MorrowglassProject,
     candidate_dir: Path,
     attempt: int,
+    excluded_asset_keys: set[str] | None = None,
 ):
     queries = _archive_query_variants(
         scene=scene,
         project=project,
     )
     assets = []
-    seen: set[str] = set()
+    seen_keys: set[str] = set()
 
     for query in queries:
         found = search_wikimedia_images(
             query,
             limit=max(
-                12,
-                attempt + 8,
+                16,
+                attempt + 10,
             ),
             thumb_width=max(
                 project.resolution
             ),
         )
         for asset in found:
-            key = (
-                asset.source_page
-                or asset.image_url
-                or asset.title
+            keys = archive_asset_keys(
+                asset
             )
-            if key in seen:
+            if (
+                keys
+                and keys & seen_keys
+            ):
                 continue
-            seen.add(key)
+            seen_keys.update(
+                keys
+            )
             assets.append(asset)
         if len(assets) >= max(
-            4,
-            attempt + 2,
+            8,
+            attempt + 4,
         ):
             break
 
@@ -298,33 +306,69 @@ def _generate_wikimedia_candidate(
         if queries
         else scene.narration
     )
+    context_query = build_archive_query(
+        "",
+        script=project.script,
+        location=(
+            project.visual_bible.location
+        ),
+        period=(
+            project.visual_bible.period
+        ),
+        existing_query="",
+        max_terms=3,
+    )
+    required_terms = (
+        archive_text_tokens(
+            base_query
+        )
+        - archive_text_tokens(
+            context_query
+        )
+    )
+    required_terms -= {
+        "historical",
+        "artifact",
+        "documentary",
+        "ancient",
+    }
+
     assets = rank_archive_assets(
         assets,
         query=base_query,
         visual_description=base_query,
+        excluded_keys=(
+            excluded_asset_keys
+            or set()
+        ),
+        required_terms=required_terms,
     )
     if not assets:
+        if required_terms:
+            scene.qc_notes.append(
+                "archive candidate rejected: "
+                "no unused result matched scene-specific terms "
+                + ", ".join(
+                    sorted(
+                        required_terms
+                    )
+                )
+            )
         return None, None
 
-    from .archive import relevance_score
-
+    asset = assets[0]
     top_score = relevance_score(
-        assets[0],
+        asset,
         base_query,
         base_query,
     )
-    if top_score < 2.0:
+    if top_score < 4.0:
         scene.qc_notes.append(
             "archive candidate rejected: "
             f"metadata relevance {top_score:.2f} is too low"
         )
         return None, None
 
-    index = min(
-        max(0, int(attempt) - 1),
-        len(assets) - 1,
-    )
-    asset = assets[index]
     target = (
         candidate_dir
         / f"{scene.scene_id}_wikimedia_{attempt}.jpg"
@@ -431,10 +475,29 @@ def generate_missing_scene_images(
             )
 
     failures: list[str] = []
-    asset_sources = dict(
-        project.metadata.get("asset_sources")
-        or {}
+    asset_sources = (
+        {}
+        if overwrite
+        else dict(
+            project.metadata.get(
+                "asset_sources"
+            )
+            or {}
+        )
     )
+    asset_hashes = (
+        {}
+        if overwrite
+        else dict(
+            project.metadata.get(
+                "asset_hashes"
+            )
+            or {}
+        )
+    )
+    used_archive_keys: set[str] = set()
+    used_image_hashes: set[str] = set()
+
     for scene in project.scenes:
         existing = (
             Path(scene.asset_path)
@@ -446,6 +509,29 @@ def generate_missing_scene_images(
             and existing.is_file()
             and not overwrite
         ):
+            existing_hash = (
+                _file_sha256(
+                    existing
+                )
+            )
+            used_image_hashes.add(
+                existing_hash
+            )
+            asset_hashes[
+                scene.scene_id
+            ] = existing_hash
+            record = asset_sources.get(
+                scene.scene_id
+            )
+            if isinstance(
+                record,
+                dict,
+            ):
+                used_archive_keys.update(
+                    archive_record_keys(
+                        record
+                    )
+                )
             continue
 
         existing_images = [
@@ -454,7 +540,32 @@ def generate_missing_scene_images(
             if item.is_file()
         ]
         if existing_images and not overwrite:
-            scene.asset_path = str(existing_images[0].resolve())
+            scene.asset_path = str(
+                existing_images[0].resolve()
+            )
+            existing_hash = (
+                _file_sha256(
+                    existing_images[0]
+                )
+            )
+            used_image_hashes.add(
+                existing_hash
+            )
+            asset_hashes[
+                scene.scene_id
+            ] = existing_hash
+            record = asset_sources.get(
+                scene.scene_id
+            )
+            if isinstance(
+                record,
+                dict,
+            ):
+                used_archive_keys.update(
+                    archive_record_keys(
+                        record
+                    )
+                )
             continue
 
         if overwrite:
@@ -462,6 +573,9 @@ def generate_missing_scene_images(
 
         accepted = False
         scene.qc_notes = []
+        scene_excluded_asset_keys = set(
+            used_archive_keys
+        )
         for attempt in range(1, max_attempts + 1):
             archive_asset = None
             if provider_name == "comfyui":
@@ -483,6 +597,9 @@ def generate_missing_scene_images(
                         project=project,
                         candidate_dir=candidate_dir,
                         attempt=attempt,
+                        excluded_asset_keys=(
+                            scene_excluded_asset_keys
+                        ),
                     )
                 except Exception as exc:
                     scene.qc_notes.append(
@@ -501,6 +618,29 @@ def generate_missing_scene_images(
                 scene.qc_notes.append(
                     f"attempt {attempt}: provider returned no image"
                 )
+                continue
+
+            candidate_archive_keys = (
+                archive_asset_keys(
+                    archive_asset
+                )
+                if archive_asset is not None
+                else set()
+            )
+            scene_excluded_asset_keys.update(
+                candidate_archive_keys
+            )
+            candidate_hash = _file_sha256(
+                source
+            )
+            if candidate_hash in used_image_hashes:
+                scene.qc_notes.append(
+                    f"attempt {attempt}: duplicate image hash rejected"
+                )
+                try:
+                    source.unlink()
+                except OSError:
+                    pass
                 continue
 
             qc = evaluate_scene_image(
@@ -526,11 +666,24 @@ def generate_missing_scene_images(
                 if source.resolve() != target.resolve():
                     shutil.move(str(source), str(target))
                 scene.asset_path = str(target.resolve())
+                used_image_hashes.add(
+                    candidate_hash
+                )
+                asset_hashes[
+                    scene.scene_id
+                ] = candidate_hash
                 if archive_asset is not None:
+                    record = attribution_record(
+                        archive_asset
+                    )
+                    record[
+                        "image_sha256"
+                    ] = candidate_hash
                     asset_sources[
                         scene.scene_id
-                    ] = attribution_record(
-                        archive_asset
+                    ] = record
+                    used_archive_keys.update(
+                        candidate_archive_keys
                     )
                 accepted = True
                 break
@@ -549,6 +702,7 @@ def generate_missing_scene_images(
 
     project.metadata["image_provider"] = provider_name
     project.metadata["asset_sources"] = asset_sources
+    project.metadata["asset_hashes"] = asset_hashes
     if asset_sources:
         attribution_path = write_attribution_file(
             asset_sources,
