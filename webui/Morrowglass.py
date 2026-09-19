@@ -473,14 +473,109 @@ default_project = str(
     / "morrowglass"
     / "video-001"
 )
-project_dir = Path(
-    st.text_input(
+projects_root = (
+    ROOT
+    / "storage"
+    / "morrowglass"
+)
+projects_root.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+if "morrowglass_project_folder" not in st.session_state:
+    st.session_state[
+        "morrowglass_project_folder"
+    ] = default_project
+
+recent_projects = [
+    item
+    for item in sorted(
+        projects_root.iterdir(),
+        key=lambda path: (
+            path.stat().st_mtime
+            if path.exists()
+            else 0
+        ),
+        reverse=True,
+    )
+    if (
+        item.is_dir()
+        and (item / "project.json").is_file()
+    )
+]
+
+load_cols = st.columns(
+    [3, 1]
+)
+with load_cols[0]:
+    project_folder_value = st.text_input(
         "Project folder",
-        value=default_project,
+        key="morrowglass_project_folder",
+    )
+with load_cols[1]:
+    load_clicked = st.button(
+        "Load project",
+        use_container_width=True,
+    )
+
+if recent_projects:
+    current_value = str(
+        st.session_state[
+            "morrowglass_project_folder"
+        ]
+    )
+    recent_labels = [
+        str(item)
+        for item in recent_projects
+    ]
+    recent_default = (
+        recent_labels.index(
+            current_value
+        )
+        if current_value in recent_labels
+        else 0
+    )
+    recent_project = st.selectbox(
+        "Recent projects",
+        options=recent_labels,
+        index=recent_default,
+        help=(
+            "Choose a saved project, then click Load project."
+        ),
+    )
+    if st.button(
+        "Use selected recent project",
+        use_container_width=True,
+    ):
+        st.session_state[
+            "morrowglass_project_folder"
+        ] = recent_project
+        st.rerun()
+
+project_dir = Path(
+    str(
+        project_folder_value
     )
 ).expanduser()
-manifest = _manifest(project_dir)
-project = _load_project(project_dir)
+manifest = _manifest(
+    project_dir
+)
+project = _load_project(
+    project_dir
+)
+
+if load_clicked:
+    if manifest.is_file():
+        st.success(
+            f"Loaded project: {project_dir.name}"
+        )
+        st.rerun()
+    else:
+        st.error(
+            "No project.json found in this folder: "
+            f"{project_dir}"
+        )
 
 stored = (
     project.metadata
