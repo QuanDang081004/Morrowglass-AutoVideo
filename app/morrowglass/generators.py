@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import hashlib
 import json
 import math
@@ -18,6 +19,7 @@ from .archive import (
     download_archive_image,
     rank_archive_assets,
     relevance_score,
+    search_openverse_images,
     search_wikimedia_images,
     write_attribution_file,
 )
@@ -253,32 +255,41 @@ def _archive_query_variants(
             )
     return variants
 
-def _generate_wikimedia_candidate(
+def _collect_archive_results(
+    queries: list[str],
     *,
-    scene,
+    provider: str,
     project: MorrowglassProject,
-    candidate_dir: Path,
     attempt: int,
-    excluded_asset_keys: set[str] | None = None,
-):
-    queries = _archive_query_variants(
-        scene=scene,
-        project=project,
-    )
+) -> list:
     assets = []
     seen_keys: set[str] = set()
 
     for query in queries:
-        found = search_wikimedia_images(
-            query,
-            limit=max(
-                16,
-                attempt + 10,
-            ),
-            thumb_width=max(
-                project.resolution
-            ),
-        )
+        if provider == "wikimedia":
+            found = search_wikimedia_images(
+                query,
+                limit=max(
+                    16,
+                    attempt + 10,
+                ),
+                thumb_width=max(
+                    project.resolution
+                ),
+            )
+        elif provider == "openverse":
+            found = search_openverse_images(
+                query,
+                limit=max(
+                    20,
+                    attempt + 12,
+                ),
+            )
+        else:
+            raise ValueError(
+                f"unknown archive provider: {provider}"
+            )
+
         for asset in found:
             keys = archive_asset_keys(
                 asset
@@ -291,16 +302,60 @@ def _generate_wikimedia_candidate(
             seen_keys.update(
                 keys
             )
-            assets.append(asset)
+            assets.append(
+                asset
+            )
+
         if len(assets) >= max(
             8,
             attempt + 4,
         ):
             break
 
-    if not assets:
-        return None, None
+    return assets
 
+
+def _pick_archive_asset(
+    assets: list,
+    *,
+    scene,
+    base_query: str,
+    required_terms: set[str],
+    excluded_asset_keys: set[str],
+):
+    ranked = rank_archive_assets(
+        assets,
+        query=base_query,
+        visual_description=base_query,
+        excluded_keys=excluded_asset_keys,
+        required_terms=required_terms,
+    )
+    if not ranked:
+        return None
+
+    asset = ranked[0]
+    score = relevance_score(
+        asset,
+        base_query,
+        base_query,
+    )
+    if score < 4.0:
+        return None
+    return asset
+
+
+def _generate_wikimedia_candidate(
+    *,
+    scene,
+    project: MorrowglassProject,
+    candidate_dir: Path,
+    attempt: int,
+    excluded_asset_keys: set[str] | None = None,
+):
+    queries = _archive_query_variants(
+        scene=scene,
+        project=project,
+    )
     base_query = (
         queries[0]
         if queries
@@ -332,46 +387,94 @@ def _generate_wikimedia_candidate(
         "documentary",
         "ancient",
     }
-
-    assets = rank_archive_assets(
-        assets,
-        query=base_query,
-        visual_description=base_query,
-        excluded_keys=(
-            excluded_asset_keys
-            or set()
-        ),
-        required_terms=required_terms,
+    excluded = (
+        excluded_asset_keys
+        or set()
     )
-    if not assets:
+
+    asset = None
+    provider_errors: list[str] = []
+
+    try:
+        wikimedia_assets = (
+            _collect_archive_results(
+                queries,
+                provider="wikimedia",
+                project=project,
+                attempt=attempt,
+            )
+        )
+        asset = _pick_archive_asset(
+            wikimedia_assets,
+            scene=scene,
+            base_query=base_query,
+            required_terms=required_terms,
+            excluded_asset_keys=excluded,
+        )
+    except Exception as exc:
+        provider_errors.append(
+            "Wikimedia: "
+            f"{type(exc).__name__}: {exc}"
+        )
+
+    if asset is None:
+        try:
+            openverse_assets = (
+                _collect_archive_results(
+                    queries,
+                    provider="openverse",
+                    project=project,
+                    attempt=attempt,
+                )
+            )
+            asset = _pick_archive_asset(
+                openverse_assets,
+                scene=scene,
+                base_query=base_query,
+                required_terms=required_terms,
+                excluded_asset_keys=excluded,
+            )
+        except Exception as exc:
+            provider_errors.append(
+                "Openverse: "
+                f"{type(exc).__name__}: {exc}"
+            )
+
+    if asset is None:
         if required_terms:
             scene.qc_notes.append(
-                "archive candidate rejected: "
-                "no unused result matched scene-specific terms "
+                "free archive rejected: no unused result matched "
+                "scene-specific terms "
                 + ", ".join(
                     sorted(
                         required_terms
                     )
                 )
             )
+        if provider_errors:
+            scene.qc_notes.extend(
+                provider_errors
+            )
         return None, None
 
-    asset = assets[0]
-    top_score = relevance_score(
-        asset,
-        base_query,
-        base_query,
+    safe_provider = re.sub(
+        r"[^a-z0-9_-]+",
+        "_",
+        str(
+            getattr(
+                asset,
+                "provider",
+                "archive",
+            )
+            or "archive"
+        ).lower(),
     )
-    if top_score < 4.0:
-        scene.qc_notes.append(
-            "archive candidate rejected: "
-            f"metadata relevance {top_score:.2f} is too low"
-        )
-        return None, None
-
     target = (
         candidate_dir
-        / f"{scene.scene_id}_wikimedia_{attempt}.jpg"
+        / (
+            f"{scene.scene_id}_"
+            f"{safe_provider}_{attempt}.jpg"
+        )
     )
     downloaded = download_archive_image(
         asset,
