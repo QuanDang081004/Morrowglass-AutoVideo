@@ -226,6 +226,11 @@ class GeneratorTests(unittest.TestCase):
                     "download_archive_image",
                     side_effect=fake_download,
                 ),
+                patch(
+                    "app.morrowglass.generators."
+                    "search_openverse_images",
+                    return_value=[],
+                ),
             ):
                 failures = generate_missing_scene_images(
                     project,
@@ -319,6 +324,11 @@ class GeneratorTests(unittest.TestCase):
                     "download_archive_image",
                     side_effect=same_download,
                 ),
+                patch(
+                    "app.morrowglass.generators."
+                    "search_openverse_images",
+                    return_value=[],
+                ),
             ):
                 failures = generate_missing_scene_images(
                     project,
@@ -339,6 +349,78 @@ class GeneratorTests(unittest.TestCase):
                     1
                 ].qc_notes
             )
+        )
+
+    def test_openverse_fallback_fills_scene_when_wikimedia_has_no_match(self):
+        asset = ArchiveAsset(
+            title="Roman funeral procession",
+            image_url="https://example.com/openverse.jpg",
+            source_page="https://example.com/openverse",
+            license_name="BY 4.0",
+            license_url="https://creativecommons.org/licenses/by/4.0/",
+            artist="Museum",
+            description="Ancient Roman funeral procession family",
+            provider="openverse",
+        )
+        project = MorrowglassProject(
+            "x",
+            "Ancient Rome funeral procession family history.",
+            [
+                Scene(
+                    "scene_001",
+                    "Ancient Rome funeral procession family history.",
+                    "Roman funeral procession",
+                    "Roman funeral procession family",
+                    search_query=(
+                        "Ancient Rome funeral procession family history"
+                    ),
+                )
+            ],
+        )
+
+        def fake_download(_asset, target, **_kwargs):
+            target = Path(target)
+            Image.new(
+                "RGB",
+                (1280, 720),
+                (70, 80, 90),
+            ).save(target)
+            return target
+
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch(
+                    "app.morrowglass.generators."
+                    "search_wikimedia_images",
+                    return_value=[],
+                ),
+                patch(
+                    "app.morrowglass.generators."
+                    "search_openverse_images",
+                    return_value=[asset],
+                ),
+                patch(
+                    "app.morrowglass.generators."
+                    "download_archive_image",
+                    side_effect=fake_download,
+                ),
+            ):
+                failures = generate_missing_scene_images(
+                    project,
+                    directory,
+                    provider="wikimedia",
+                    semantic_qc=False,
+                )
+
+        self.assertEqual(
+            failures,
+            [],
+        )
+        self.assertEqual(
+            project.metadata[
+                "asset_sources"
+            ]["scene_001"]["provider"],
+            "openverse",
         )
 
     def test_comfyui_image_provider_uses_scene_prompt(self):
