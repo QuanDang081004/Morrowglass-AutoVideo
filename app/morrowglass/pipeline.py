@@ -21,6 +21,7 @@ from .models import (
     VisualBible,
     aspect_composition,
 )
+from .qc import duplicate_scene_asset_groups
 from .renderer import render_final_video
 from .timeline import TIMELINE_VERSION, assign_from_srt, parse_srt
 
@@ -205,7 +206,25 @@ class MorrowglassPipeline:
         missing = self.refresh_assets(project, project_dir)
         if missing:
             raise FileNotFoundError(
-                "missing scene assets: " + ", ".join(missing)
+                "missing scene assets: "
+                + ", ".join(
+                    missing
+                )
+            )
+        duplicate_groups = (
+            duplicate_scene_asset_groups(
+                project
+            )
+        )
+        if duplicate_groups:
+            details = " | ".join(
+                ", ".join(group)
+                for group in duplicate_groups
+            )
+            raise ValueError(
+                "duplicate scene assets must be regenerated "
+                "before render: "
+                + details
             )
         return render_final_video(
             project,
