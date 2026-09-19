@@ -27,6 +27,7 @@ from .comfyui import (
 )
 from .models import AssetType, MorrowglassProject
 from .qc import evaluate_scene_image
+from .query_language import build_archive_query
 
 
 class ImageGenerationUnavailable(RuntimeError):
@@ -193,36 +194,47 @@ def _archive_query_variants(
     scene,
     project: MorrowglassProject,
 ) -> list[str]:
-    base = (
-        str(
+    base = build_archive_query(
+        scene.narration,
+        script=project.script,
+        location=project.visual_bible.location,
+        period=project.visual_bible.period,
+        existing_query=str(
             getattr(
                 scene,
                 "search_query",
                 "",
             )
             or ""
-        ).strip()
-        or scene.visual_description
-        or scene.narration
+        ),
     )
     words = base.split()
+
     short = " ".join(
         words[:5]
     ).strip()
-    context = " ".join(
+    context = build_archive_query(
+        "",
+        script=project.script,
+        location=project.visual_bible.location,
+        period=project.visual_bible.period,
+        existing_query="",
+        max_terms=3,
+    )
+    context_specific = " ".join(
         value
         for value in (
-            project.visual_bible.location,
-            project.visual_bible.period,
-            " ".join(words[:4]),
+            context,
+            " ".join(words[-3:]),
         )
-        if str(value or "").strip()
+        if value
     ).strip()
 
     variants: list[str] = []
     for value in (
         base,
         short,
+        context_specific,
         context,
     ):
         normalized = " ".join(
@@ -236,7 +248,6 @@ def _archive_query_variants(
                 normalized
             )
     return variants
-
 
 def _generate_wikimedia_candidate(
     *,
@@ -290,11 +301,25 @@ def _generate_wikimedia_candidate(
     assets = rank_archive_assets(
         assets,
         query=base_query,
-        visual_description=(
-            scene.visual_description
-            or scene.narration
-        ),
+        visual_description=base_query,
     )
+    if not assets:
+        return None, None
+
+    from .archive import relevance_score
+
+    top_score = relevance_score(
+        assets[0],
+        base_query,
+        base_query,
+    )
+    if top_score < 2.0:
+        scene.qc_notes.append(
+            "archive candidate rejected: "
+            f"metadata relevance {top_score:.2f} is too low"
+        )
+        return None, None
+
     index = min(
         max(0, int(attempt) - 1),
         len(assets) - 1,
