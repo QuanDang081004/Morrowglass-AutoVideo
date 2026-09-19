@@ -170,7 +170,13 @@ def _collect(
     found: list[str] = []
     consumed = haystack
 
-    for source, target in phrases:
+    for source, target in sorted(
+        phrases,
+        key=lambda item: len(
+            _normalized(item[0])
+        ),
+        reverse=True,
+    ):
         source_norm = _normalized(
             source
         )
