@@ -95,6 +95,36 @@ def _pipeline(
     )
 
 
+def _apply_pending_project_switch(
+    state,
+    *,
+    default_project: str,
+) -> None:
+    pending = state.pop(
+        "morrowglass_pending_project_folder",
+        None,
+    )
+    if (
+        "morrowglass_project_folder"
+        not in state
+    ):
+        state[
+            "morrowglass_project_folder"
+        ] = default_project
+    if pending:
+        state[
+            "morrowglass_project_folder"
+        ] = str(pending)
+
+
+def _queue_project_switch(
+    project_folder: str,
+) -> None:
+    st.session_state[
+        "morrowglass_pending_project_folder"
+    ] = str(project_folder)
+
+
 def _manifest(
     project_dir: Path,
 ) -> Path:
@@ -483,10 +513,10 @@ projects_root.mkdir(
     exist_ok=True,
 )
 
-if "morrowglass_project_folder" not in st.session_state:
-    st.session_state[
-        "morrowglass_project_folder"
-    ] = default_project
+_apply_pending_project_switch(
+    st.session_state,
+    default_project=default_project,
+)
 
 recent_projects = [
     item
@@ -544,14 +574,12 @@ if recent_projects:
             "Choose a saved project, then click Load project."
         ),
     )
-    if st.button(
-        "Use selected recent project",
+    st.button(
+        "Load selected recent project",
         use_container_width=True,
-    ):
-        st.session_state[
-            "morrowglass_project_folder"
-        ] = recent_project
-        st.rerun()
+        on_click=_queue_project_switch,
+        args=(recent_project,),
+    )
 
 project_dir = Path(
     str(
