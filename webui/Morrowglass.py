@@ -1719,6 +1719,61 @@ try:
                         project_dir
                     )
 
+                duplicate_targets = (
+                    duplicate_scene_ids(
+                        project
+                    )
+                    if project
+                    else []
+                )
+                if (
+                    duplicate_targets
+                    and project
+                    and project.asset_mode
+                    == AssetMode.AUTO
+                ):
+                    status.write(
+                        "Duplicate assets detected. "
+                        "Rebuilding only later duplicate scenes: "
+                        + ", ".join(
+                            duplicate_targets
+                        )
+                    )
+                    _clear_scene_asset_state(
+                        project,
+                        project_dir,
+                        duplicate_targets,
+                    )
+                    project = _load_project(
+                        project_dir
+                    )
+                    duplicate_failures = (
+                        _auto_images(
+                            project,
+                            project_dir,
+                            attempts=image_attempts,
+                            min_qc_score=float(
+                                min_qc_score
+                            ),
+                            semantic_qc=semantic_qc,
+                            provider=image_provider,
+                            comfyui_url=comfyui_url,
+                            comfyui_image_workflow=(
+                                comfyui_image_workflow
+                            ),
+                        )
+                    )
+                    if duplicate_failures:
+                        status.write(
+                            "Could not replace every duplicate scene: "
+                            + ", ".join(
+                                duplicate_failures
+                            )
+                        )
+                    project = _load_project(
+                        project_dir
+                    )
+
                 if (
                     auto_videos
                     and project
@@ -1752,23 +1807,42 @@ try:
                     project,
                     project_dir,
                 )
-                if missing:
+                duplicate_groups = (
+                    duplicate_scene_asset_groups(
+                        project
+                    )
+                )
+                if (
+                    missing
+                    or duplicate_groups
+                ):
                     status.update(
                         label=(
-                            "HYBRID checkpoint: "
-                            "add missing assets"
+                            "AUTO checkpoint: "
+                            "assets need attention"
                         ),
                         state="complete",
                     )
-                    st.warning(
-                        "Missing: "
-                        + ", ".join(missing)
-                    )
+                    if missing:
+                        st.warning(
+                            "Missing: "
+                            + ", ".join(
+                                missing
+                            )
+                        )
+                    if duplicate_groups:
+                        st.warning(
+                            "Duplicate assets remain: "
+                            + " | ".join(
+                                ", ".join(
+                                    group
+                                )
+                                for group in duplicate_groups
+                            )
+                        )
                     st.info(
-                        "Use prompt files in "
-                        f"{project_dir / 'prompts'} "
-                        "or upload replacements "
-                        "below."
+                        "AUTO stopped safely instead of rendering "
+                        "with missing or duplicate visuals."
                     )
                 else:
                     status.write(
