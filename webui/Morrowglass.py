@@ -39,6 +39,10 @@ from app.morrowglass.models import (  # noqa: E402
 from app.morrowglass.pipeline import (  # noqa: E402
     MorrowglassPipeline,
 )
+from app.morrowglass.qc import (  # noqa: E402
+    duplicate_scene_asset_groups,
+    duplicate_scene_ids,
+)
 from app.morrowglass.timeline import TIMELINE_VERSION  # noqa: E402
 from app.morrowglass.tts_profiles import (  # noqa: E402
     default_kokoro_en_python as detect_kokoro_en_python,
@@ -193,6 +197,70 @@ def _delete_scene_assets(
         ):
             if candidate.is_file():
                 candidate.unlink()
+
+
+def _clear_scene_asset_state(
+    project: MorrowglassProject,
+    project_dir: Path,
+    scene_ids: list[str] | set[str],
+) -> None:
+    targets = set(scene_ids)
+    for scene in project.scenes:
+        if scene.scene_id not in targets:
+            continue
+        _delete_scene_assets(
+            project_dir,
+            scene.scene_id,
+        )
+        scene.asset_path = ""
+
+    for metadata_key in (
+        "asset_sources",
+        "asset_hashes",
+        "video_sources",
+    ):
+        mapping = project.metadata.get(
+            metadata_key
+        )
+        if isinstance(mapping, dict):
+            for scene_id in targets:
+                mapping.pop(
+                    scene_id,
+                    None,
+                )
+            project.metadata[
+                metadata_key
+            ] = mapping
+
+    project.metadata[
+        "image_generation_failures"
+    ] = [
+        scene_id
+        for scene_id in (
+            project.metadata.get(
+                "image_generation_failures"
+            )
+            or []
+        )
+        if scene_id not in targets
+    ]
+    project.metadata[
+        "video_generation_failures"
+    ] = [
+        scene_id
+        for scene_id in (
+            project.metadata.get(
+                "video_generation_failures"
+            )
+            or []
+        )
+        if scene_id not in targets
+    ]
+    project.save(
+        _manifest(
+            project_dir
+        )
+    )
 
 
 def _save_uploaded_asset(
@@ -1173,6 +1241,25 @@ regenerate_assets_clicked = st.button(
     ),
 )
 
+current_duplicate_ids = (
+    duplicate_scene_ids(
+        project
+    )
+    if project
+    else []
+)
+regenerate_duplicates_clicked = st.button(
+    "↻ Regenerate duplicate assets only",
+    use_container_width=True,
+    disabled=not bool(
+        current_duplicate_ids
+    ),
+    help=(
+        "Keep the earliest scene that uses an asset and rebuild "
+        "only later scenes that duplicate the same source/image."
+    ),
+)
+
 try:
     if plan_clicked:
         if not script.strip():
@@ -1292,6 +1379,7 @@ try:
     if (
         assets_clicked
         or regenerate_assets_clicked
+        or regenerate_duplicates_clicked
     ):
         project = _load_project(
             project_dir
@@ -1300,30 +1388,40 @@ try:
             st.error("Plan scenes first.")
         else:
             if regenerate_assets_clicked:
-                for scene in project.scenes:
-                    _delete_scene_assets(
-                        project_dir,
-                        scene.scene_id,
-                    )
-                    scene.asset_path = ""
-                project.metadata[
-                    "asset_sources"
-                ] = {}
-                project.metadata[
-                    "video_sources"
-                ] = {}
-                project.metadata[
-                    "image_generation_failures"
-                ] = []
-                project.metadata[
-                    "video_generation_failures"
-                ] = []
-                project.save(
-                    manifest
+                _clear_scene_asset_state(
+                    project,
+                    project_dir,
+                    [
+                        scene.scene_id
+                        for scene in project.scenes
+                    ],
+                )
+                project = _load_project(
+                    project_dir
                 )
                 st.info(
                     "Existing scene assets cleared. "
                     "Rebuilding all scenes with current AUTO logic..."
+                )
+            elif regenerate_duplicates_clicked:
+                duplicate_targets = (
+                    duplicate_scene_ids(
+                        project
+                    )
+                )
+                _clear_scene_asset_state(
+                    project,
+                    project_dir,
+                    duplicate_targets,
+                )
+                project = _load_project(
+                    project_dir
+                )
+                st.info(
+                    "Rebuilding duplicate scenes only: "
+                    + ", ".join(
+                        duplicate_targets
+                    )
                 )
 
             _save_ui_settings(
@@ -1723,8 +1821,22 @@ if project:
     missing = missing_scene_ids(
         project
     )
+    duplicate_groups = (
+        duplicate_scene_asset_groups(
+            project
+        )
+    )
 
     st.divider()
+    if duplicate_groups:
+        st.error(
+            "Duplicate scene assets detected: "
+            + " | ".join(
+                ", ".join(group)
+                for group in duplicate_groups
+            )
+            + ". AUTO should regenerate later duplicates before render."
+        )
     left, right = st.columns(
         [2, 1]
     )
@@ -1823,6 +1935,14 @@ if project:
                 scene_id,
                 uploaded,
             ) in assignments:
+                _clear_scene_asset_state(
+                    project,
+                    project_dir,
+                    [scene_id],
+                )
+                project = _load_project(
+                    project_dir
+                )
                 _save_uploaded_asset(
                     project_dir,
                     scene_id,
@@ -1950,10 +2070,18 @@ if project:
                 ),
             )
         ):
+            _clear_scene_asset_state(
+                project,
+                project_dir,
+                [selected_id],
+            )
             saved = _save_uploaded_asset(
                 project_dir,
                 selected_id,
                 uploaded,
+            )
+            project = _load_project(
+                project_dir
             )
             resolve_assets(
                 project,
