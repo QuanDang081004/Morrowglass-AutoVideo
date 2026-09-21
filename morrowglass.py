@@ -209,6 +209,8 @@ def cmd_status(args) -> int:
 def _generate_images_for_project(
     project: MorrowglassProject,
     args,
+    *,
+    provider_override: str | None = None,
 ) -> int:
     try:
         failures = _pipeline(
@@ -236,10 +238,13 @@ def _generate_images_for_project(
                 "image_attempts",
                 2,
             ),
-            provider=getattr(
-                args,
-                "image_provider",
-                "auto",
+            provider=(
+                provider_override
+                or getattr(
+                    args,
+                    "image_provider",
+                    "auto",
+                )
             ),
             comfyui_url=getattr(
                 args,
@@ -552,6 +557,7 @@ def cmd_run(args) -> int:
         result = _generate_images_for_project(
             project,
             args,
+            provider_override="auto",
         )
         if result != 0:
             print(
