@@ -2,6 +2,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from PIL import ImageFont
+
+from app.morrowglass.models import (
+    MorrowglassProject,
+    Scene,
+)
 from app.morrowglass.renderer import (
     _build_scene_ffmpeg_command,
     _fit_filter,
@@ -9,10 +15,69 @@ from app.morrowglass.renderer import (
     _load_render_cache,
     _save_render_cache,
     _scene_render_fingerprint,
+    select_subtitle_font,
 )
 
 
 class RendererTests(unittest.TestCase):
+    def test_vietnamese_project_uses_bundled_vietnamese_font(self):
+        project = MorrowglassProject(
+            "Việt",
+            (
+                "Ở La Mã cổ đại, một số gia đình "
+                "lưu giữ mặt nạ sáp của tổ tiên."
+            ),
+            [
+                Scene(
+                    "scene_001",
+                    "Ở La Mã cổ đại.",
+                    "Roman scene",
+                    "Roman scene",
+                )
+            ],
+        )
+        self.assertEqual(
+            select_subtitle_font(
+                project,
+                "STHeitiMedium.ttc",
+            ),
+            "BeVietnamPro-Bold.ttf",
+        )
+
+    def test_bundled_vietnamese_font_has_distinct_vietnamese_glyphs(self):
+        font_path = (
+            Path(__file__).resolve().parents[2]
+            / "resource"
+            / "fonts"
+            / "BeVietnamPro-Bold.ttf"
+        )
+        self.assertTrue(
+            font_path.is_file()
+        )
+        font = ImageFont.truetype(
+            str(font_path),
+            64,
+        )
+        glyph_masks = []
+        for char in "ấộưđả":
+            mask = font.getmask(
+                char
+            )
+            glyph_masks.append(
+                (
+                    mask.size,
+                    bytes(mask),
+                )
+            )
+        self.assertGreater(
+            len(
+                set(
+                    glyph_masks
+                )
+            ),
+            1,
+        )
+
     def test_cover_filter_targets_exact_canvas(self):
         value = _fit_filter(
             1920,
