@@ -260,12 +260,16 @@ def _generate_images_for_project(
 
     if failures:
         print(
-            "Image generation/QC failed for: "
+            "Research could not safely resolve: "
             + ", ".join(failures)
+        )
+        print(
+            "Manual AI prompts: "
+            + str(Path(args.project_dir) / "prompts" / "MANUAL_IMAGES.md")
         )
         return 2
 
-    print("All missing scene images were generated.")
+    print("All missing scenes were resolved by research.")
     return 0
 
 
@@ -551,8 +555,8 @@ def cmd_run(args) -> int:
         )
         if result != 0:
             print(
-                "FREE AUTO could not resolve every scene; "
-                "continuing to the manual fallback checkpoint."
+                "Research left unresolved scenes. "
+                "Use prompts/MANUAL_IMAGES.md to create those images manually."
             )
         project = MorrowglassProject.load(
             manifest
@@ -591,16 +595,16 @@ def cmd_run(args) -> int:
 
     if missing:
         print(
-            "HYBRID checkpoint: "
-            "assets are required before render."
+            "RESEARCH checkpoint: "
+            "manual images are required before render."
         )
         print(
             "Missing: "
             + ", ".join(missing)
         )
         print(
-            f"Prompts: "
-            f"{project_dir / 'prompts'}"
+            f"Manual queue: "
+            f"{project_dir / 'prompts' / 'MANUAL_IMAGES.md'}"
         )
         return 2
 
@@ -811,6 +815,10 @@ def _add_image_options(parser) -> None:
             "comfyui",
         ],
         default="auto",
+        help=(
+            "auto is strict archive research only; it never invokes AI image "
+            "generation. comfyui must be selected explicitly."
+        ),
     )
     parser.add_argument(
         "--image-attempts",
@@ -916,8 +924,8 @@ def build_parser() -> argparse.ArgumentParser:
     images = sub.add_parser(
         "images",
         help=(
-            "Generate missing scene "
-            "images and run QC"
+            "Research missing scene images; unresolved scenes "
+            "are exported for manual AI generation"
         ),
     )
     images.add_argument(
