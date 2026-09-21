@@ -6,6 +6,7 @@ from typing import Callable
 from .assets import (
     missing_scene_ids,
     resolve_assets,
+    write_manual_image_queue,
     write_prompt_pack,
 )
 from .audio import synthesize_narration, transcribe_word_timing
@@ -83,6 +84,7 @@ class MorrowglassPipeline:
         project.set_aspect(aspect)
         write_prompt_pack(project, project_dir)
         resolve_assets(project, project_dir)
+        write_manual_image_queue(project, project_dir)
         project.save(project_dir / "project.json")
         return project
 
@@ -144,6 +146,7 @@ class MorrowglassPipeline:
         project_dir: str | Path,
     ) -> list[str]:
         resolve_assets(project, project_dir)
+        write_manual_image_queue(project, project_dir)
         project.save(Path(project_dir) / "project.json")
         return missing_scene_ids(project)
 
