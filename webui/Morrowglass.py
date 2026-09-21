@@ -559,7 +559,7 @@ st.set_page_config(
 st.title("Morrowglass AutoVideo")
 st.caption(
     "Paste script → scene plan → Kokoro → Whisper → "
-    "free-first auto assets → edit → final MP4"
+    "strict image research → manual AI fill-in → final MP4"
 )
 if not _external_ai_enabled():
     st.success(
@@ -689,7 +689,6 @@ stored_image_provider = str(
 if stored_image_provider not in {
     "auto",
     "wikimedia",
-    "comfyui",
 }:
     stored_image_provider = "auto"
 
@@ -1081,11 +1080,10 @@ with st.sidebar:
                 )
 
     st.divider()
-    st.subheader("Auto assets")
+    st.subheader("Image research")
     image_provider_options = [
         "auto",
         "wikimedia",
-        "comfyui",
     ]
     image_provider = st.selectbox(
         "Image provider",
@@ -1094,8 +1092,9 @@ with st.sidebar:
             stored_image_provider
         ),
         help=(
-            "FREE-ONLY: local ComfyUI when available, otherwise "
-            "Wikimedia Commons. Paid image APIs are hidden and blocked."
+            "AUTO is research-only: Wikimedia Commons → Openverse → The Met. "
+            "Weak matches are rejected and exported to MANUAL_IMAGES.md. "
+            "AI image generation is never invoked by this workflow."
         ),
     )
     comfyui_url = st.text_input(
@@ -1218,7 +1217,7 @@ voice_clicked = action_cols[1].button(
     use_container_width=True,
 )
 assets_clicked = action_cols[2].button(
-    "3. Auto assets",
+    "3. Research images",
     use_container_width=True,
 )
 render_clicked = action_cols[3].button(
@@ -1235,9 +1234,9 @@ regenerate_assets_clicked = st.button(
     "↻ Regenerate all assets",
     use_container_width=True,
     help=(
-        "Delete existing scene images/videos and rebuild them "
-        "with the current AUTO asset logic. Narration and timing "
-        "are preserved."
+        "Delete existing scene images/videos and research them again. "
+        "Unresolved scenes remain empty for manual AI generation. "
+        "Narration and timing are preserved."
     ),
 )
 
@@ -1401,7 +1400,7 @@ try:
                 )
                 st.info(
                     "Existing scene assets cleared. "
-                    "Rebuilding all scenes with current AUTO logic..."
+                    "Researching all scenes again..."
                 )
             elif regenerate_duplicates_clicked:
                 duplicate_targets = (
@@ -1446,7 +1445,7 @@ try:
                 auto_videos=auto_videos,
             )
             with st.spinner(
-                "Generating and checking "
+                "Researching and checking "
                 "scene images..."
             ):
                 failures = _auto_images(
@@ -1691,8 +1690,8 @@ try:
                     == AssetMode.AUTO
                 ):
                     status.write(
-                        "Generating and checking "
-                        "scene images..."
+                        "Researching archive images "
+                        "for each scene..."
                     )
                     failures = _auto_images(
                         project,
@@ -1710,9 +1709,8 @@ try:
                     )
                     if failures:
                         status.write(
-                            "Free AUTO assets could not resolve "
-                            "every scene. Manual fallback will be "
-                            "offered only for the remaining scenes: "
+                            "Strict research could not safely resolve "
+                            "every scene. Manual AI prompts were created for: "
                             + ", ".join(failures)
                         )
                     project = _load_project(
@@ -1756,7 +1754,7 @@ try:
                                 min_qc_score
                             ),
                             semantic_qc=semantic_qc,
-                            provider=image_provider,
+                            provider="auto",
                             comfyui_url=comfyui_url,
                             comfyui_image_workflow=(
                                 comfyui_image_workflow
@@ -1818,8 +1816,8 @@ try:
                 ):
                     status.update(
                         label=(
-                            "AUTO checkpoint: "
-                            "assets need attention"
+                            "Research checkpoint: "
+                            "manual images needed"
                         ),
                         state="complete",
                     )
@@ -1841,8 +1839,9 @@ try:
                             )
                         )
                     st.info(
-                        "AUTO stopped safely instead of rendering "
-                        "with missing or duplicate visuals."
+                        "Research stopped safely instead of using weak visuals. "
+                        "Create the missing images from prompts/MANUAL_IMAGES.md, "
+                        "save them with the requested scene filenames, then run again."
                     )
                 else:
                     status.write(
@@ -1966,13 +1965,13 @@ if project:
 
     if missing:
         st.subheader(
-            "Quick manual fallback"
+            "Manual AI fill-in"
         )
         st.caption(
-            "Drop all remaining assets at once. Files named "
-            "scene_001.*, scene_002.* are matched automatically. "
-            "If the number of unnamed files exactly matches the "
-            "missing scenes, upload order is used."
+            "Research could not safely resolve these scenes. Use "
+            "prompts/MANUAL_IMAGES.md to generate the missing images, then "
+            "upload them here. Files named scene_001.*, scene_002.* are "
+            "matched automatically."
         )
         batch_uploads = st.file_uploader(
             "Batch upload missing scene assets",
@@ -2172,7 +2171,7 @@ if project:
     )
     if failures:
         st.warning(
-            "Image generation failures: "
+            "Unresolved research scenes: "
             + ", ".join(failures)
         )
 
