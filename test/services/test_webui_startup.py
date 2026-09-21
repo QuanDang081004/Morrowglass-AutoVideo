@@ -12,6 +12,58 @@ WEBUI_MAIN = ROOT_DIR / "webui" / "Main.py"
 
 
 class TestWebuiStartup(unittest.TestCase):
+    def test_pending_project_switch_applies_before_widget_state(self):
+        source = (
+            ROOT_DIR
+            / "webui"
+            / "Morrowglass.py"
+        ).read_text(
+            encoding="utf-8"
+        )
+        namespace = {}
+        start = source.index(
+            "def _apply_pending_project_switch("
+        )
+        end = source.index(
+            "\ndef _queue_project_switch(",
+            start,
+        )
+        helper_source = source[
+            start:end
+        ]
+        exec(
+            helper_source,
+            namespace,
+        )
+        apply_switch = namespace[
+            "_apply_pending_project_switch"
+        ]
+
+        state = {
+            "morrowglass_project_folder": (
+                r"D:\Morrowglass-AutoVideo\storage\morrowglass\video-001"
+            ),
+            "morrowglass_pending_project_folder": (
+                r"D:\Morrowglass-AutoVideo\storage\morrowglass\tiktok-test-01"
+            ),
+        }
+        apply_switch(
+            state,
+            default_project="unused",
+        )
+        self.assertEqual(
+            state[
+                "morrowglass_project_folder"
+            ],
+            (
+                r"D:\Morrowglass-AutoVideo\storage\morrowglass\tiktok-test-01"
+            ),
+        )
+        self.assertNotIn(
+            "morrowglass_pending_project_folder",
+            state,
+        )
+
     def test_external_directory_prefers_project_app_package(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)

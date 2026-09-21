@@ -1,0 +1,502 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import subprocess
+from pathlib import Path
+
+from loguru import logger
+
+from app.models.schema import VideoFitMode, VideoParams
+from app.services import video
+from app.utils import utils
+
+from .captions import build_readable_captions
+from .models import MorrowglassProject
+from .query_language import likely_vietnamese
+
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
+IMAGE_MOTION_MODES = {"none", "slow_zoom"}
+_RENDER_CACHE_VERSION = 1
+
+
+def _fit_filter(
+    width: int,
+    height: int,
+    fit_mode: str = "cover",
+    fps: int = 30,
+) -> str:
+    mode = VideoFitMode(fit_mode)
+    if mode == VideoFitMode.cover:
+        return (
+            f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},setsar=1,fps={fps},format=yuv420p"
+        )
+    return (
+        f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black,"
+        f"setsar=1,fps={fps},format=yuv420p"
+    )
+
+
+def _image_motion_filter(
+    width: int,
+    height: int,
+    *,
+    duration: float,
+    fit_mode: str = "cover",
+    fps: int = 30,
+    motion_mode: str = "slow_zoom",
+    motion_variant: int = 0,
+) -> str:
+    """Build a subtle deterministic Ken Burns-style filter for still images."""
+    if motion_mode not in IMAGE_MOTION_MODES:
+        raise ValueError(f"unsupported image motion mode: {motion_mode}")
+    if motion_mode == "none":
+        return _fit_filter(width, height, fit_mode, fps)
+
+    mode = VideoFitMode(fit_mode)
+    if mode == VideoFitMode.cover:
+        base = (
+            f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height}"
+        )
+    else:
+        base = (
+            f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black"
+        )
+
+    frames = max(1, int(math.ceil(duration * fps)))
+    zoom_step = 0.06 / frames
+    variant = int(motion_variant) % 5
+
+    center_x = "iw/2-(iw/zoom/2)"
+    center_y = "ih/2-(ih/zoom/2)"
+    x_expr = center_x
+    y_expr = center_y
+    if variant == 1:
+        x_expr = "0"
+    elif variant == 2:
+        x_expr = "iw-iw/zoom"
+    elif variant == 3:
+        y_expr = "0"
+    elif variant == 4:
+        y_expr = "ih-ih/zoom"
+
+    return (
+        f"{base},"
+        f"zoompan=z='min(zoom+{zoom_step:.8f},1.06)':"
+        f"x='{x_expr}':y='{y_expr}':d=1:"
+        f"s={width}x{height}:fps={fps},"
+        "setsar=1,format=yuv420p"
+    )
+
+
+def _build_scene_ffmpeg_command(
+    *,
+    asset_path: str | Path,
+    output_path: str | Path,
+    duration: float,
+    width: int,
+    height: int,
+    fit_mode: str = "cover",
+    fps: int = 30,
+    image_motion: str = "slow_zoom",
+    motion_variant: int = 0,
+    ffmpeg_binary: str | None = None,
+) -> list[str]:
+    asset = Path(asset_path)
+    suffix = asset.suffix.lower()
+    if duration <= 0:
+        raise ValueError("scene duration must be positive")
+    if suffix not in IMAGE_EXTS | VIDEO_EXTS:
+        raise ValueError(f"unsupported scene asset: {asset}")
+
+    command = [ffmpeg_binary or utils.get_ffmpeg_binary(), "-y"]
+    if suffix in IMAGE_EXTS:
+        command.extend(
+            ["-loop", "1", "-framerate", str(fps), "-i", str(asset)]
+        )
+        video_filter = _image_motion_filter(
+            width,
+            height,
+            duration=duration,
+            fit_mode=fit_mode,
+            fps=fps,
+            motion_mode=image_motion,
+            motion_variant=motion_variant,
+        )
+    else:
+        command.extend(["-stream_loop", "-1", "-i", str(asset)])
+        video_filter = _fit_filter(width, height, fit_mode, fps)
+
+    command.extend(
+        [
+            "-t",
+            f"{duration:.3f}",
+            "-vf",
+            video_filter,
+            "-an",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "medium",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ]
+    )
+    return command
+
+
+
+def _scene_render_fingerprint(
+    *,
+    scene_id: str,
+    asset_path: str | Path,
+    duration: float,
+    width: int,
+    height: int,
+    fit_mode: str,
+    fps: int,
+    image_motion: str,
+    motion_variant: int,
+) -> str:
+    asset = Path(asset_path)
+    stat = asset.stat()
+    payload = {
+        "cache_version": _RENDER_CACHE_VERSION,
+        "scene_id": scene_id,
+        "asset_path": str(asset.resolve()),
+        "asset_size": stat.st_size,
+        "asset_mtime_ns": stat.st_mtime_ns,
+        "duration": round(float(duration), 6),
+        "width": int(width),
+        "height": int(height),
+        "fit_mode": str(fit_mode),
+        "fps": int(fps),
+        "image_motion": str(image_motion),
+        "motion_variant": int(motion_variant),
+    }
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _load_render_cache(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    entries = raw.get("scenes")
+    if not isinstance(entries, dict):
+        return {}
+    return {
+        str(key): str(value)
+        for key, value in entries.items()
+        if isinstance(value, str)
+    }
+
+
+def _save_render_cache(
+    path: Path,
+    entries: dict[str, str],
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": _RENDER_CACHE_VERSION,
+        "scenes": entries,
+    }
+    temp_path = path.with_suffix(".tmp")
+    temp_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    temp_path.replace(path)
+
+
+def _run_ffmpeg(command: list[str], *, label: str) -> None:
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if result.returncode != 0:
+        details = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(f"{label} failed: {details[-4000:]}")
+
+
+def render_scene_timeline(
+    project: MorrowglassProject,
+    project_dir: str | Path,
+    *,
+    fit_mode: str = "cover",
+    fps: int = 30,
+    image_motion: str = "slow_zoom",
+) -> Path:
+    """Render every scene to its exact timeline duration, then concatenate."""
+    project_dir = Path(project_dir)
+    cache_dir = project_dir / "cache" / "scene_clips"
+    output_dir = project_dir / "output"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    width, height = project.resolution
+    clip_files: list[str] = []
+    cache_manifest = cache_dir / "render-cache.json"
+    previous_cache = _load_render_cache(cache_manifest)
+    next_cache: dict[str, str] = {}
+    rendered_count = 0
+    reused_count = 0
+
+    for scene_index, scene in enumerate(project.scenes):
+        if not scene.asset_path:
+            raise FileNotFoundError(
+                f"missing asset for {scene.scene_id}"
+            )
+        asset = Path(scene.asset_path)
+        if not asset.is_file():
+            raise FileNotFoundError(
+                f"asset does not exist for {scene.scene_id}: {asset}"
+            )
+        if scene.start is None or scene.end is None:
+            raise ValueError(
+                f"scene timing is missing for {scene.scene_id}"
+            )
+        duration = scene.end - scene.start
+        if duration <= 0.02:
+            raise ValueError(
+                f"invalid duration for {scene.scene_id}: "
+                f"{duration:.3f}s"
+            )
+
+        scene_clip = cache_dir / f"{scene.scene_id}.mp4"
+        fingerprint = _scene_render_fingerprint(
+            scene_id=scene.scene_id,
+            asset_path=asset,
+            duration=duration,
+            width=width,
+            height=height,
+            fit_mode=fit_mode,
+            fps=fps,
+            image_motion=image_motion,
+            motion_variant=scene_index,
+        )
+        can_reuse = (
+            previous_cache.get(scene.scene_id) == fingerprint
+            and scene_clip.is_file()
+            and scene_clip.stat().st_size > 0
+        )
+        if can_reuse:
+            reused_count += 1
+            logger.info(
+                f"reuse cached scene clip: {scene.scene_id}"
+            )
+        else:
+            command = _build_scene_ffmpeg_command(
+                asset_path=asset,
+                output_path=scene_clip,
+                duration=duration,
+                width=width,
+                height=height,
+                fit_mode=fit_mode,
+                fps=fps,
+                image_motion=image_motion,
+                motion_variant=scene_index,
+            )
+            _run_ffmpeg(
+                command,
+                label=f"render {scene.scene_id}",
+            )
+            rendered_count += 1
+
+        next_cache[scene.scene_id] = fingerprint
+        clip_files.append(str(scene_clip))
+
+    _save_render_cache(cache_manifest, next_cache)
+    logger.info(
+        "scene render cache: "
+        f"rendered={rendered_count}, reused={reused_count}"
+    )
+
+    audio_duration = float(
+        project.metadata.get("audio_duration") or 0
+    )
+    if audio_duration <= 0:
+        audio_duration = (
+            float(project.scenes[-1].end or 0)
+            if project.scenes
+            else 0
+        )
+    if audio_duration <= 0:
+        raise ValueError("audio duration is unavailable")
+
+    combined = output_dir / "scene_timeline.mp4"
+    video.concat_video_clips_with_ffmpeg(
+        clip_files=clip_files,
+        output_file=str(combined),
+        threads=2,
+        output_dir=str(cache_dir),
+        max_duration=audio_duration,
+    )
+    project.metadata["combined_video_file"] = str(
+        combined.resolve()
+    )
+    project.metadata["image_motion"] = image_motion
+    project.metadata["scene_clips_rendered"] = rendered_count
+    project.metadata["scene_clips_reused"] = reused_count
+    return combined
+
+
+_DEFAULT_SUBTITLE_FONT = "BeVietnamPro-Bold.ttf"
+_VIETNAMESE_SUBTITLE_FONT = "BeVietnamPro-Bold.ttf"
+
+
+def select_subtitle_font(
+    project: MorrowglassProject,
+    requested_font: str | None = None,
+) -> str:
+    requested = str(
+        requested_font
+        or ""
+    ).strip()
+
+    if likely_vietnamese(
+        project.script
+    ):
+        return (
+            _VIETNAMESE_SUBTITLE_FONT
+        )
+
+    if requested:
+        return requested
+
+    return _DEFAULT_SUBTITLE_FONT
+
+
+def render_final_video(
+    project: MorrowglassProject,
+    project_dir: str | Path,
+    *,
+    bgm_file: str | Path | None = None,
+    bgm_volume: float = 0.12,
+    font_name: str | None = None,
+    font_size: int = 48,
+    subtitle_position: str = "bottom",
+    text_color: str = "#FFFFFF",
+    stroke_color: str = "#000000",
+    stroke_width: float = 2.0,
+    fit_mode: str = "cover",
+    image_motion: str = "slow_zoom",
+) -> Path:
+    project_dir = Path(project_dir)
+    audio_file = Path(
+        str(project.metadata.get("audio_file") or "")
+    )
+    word_srt = Path(
+        str(project.metadata.get("word_subtitle_file") or "")
+    )
+    if not audio_file.is_file():
+        raise FileNotFoundError(
+            "narration audio is missing; run the voice stage first"
+        )
+    if not word_srt.is_file():
+        raise FileNotFoundError(
+            "word timing is missing; run the voice stage first"
+        )
+
+    combined = render_scene_timeline(
+        project,
+        project_dir,
+        fit_mode=fit_mode,
+        image_motion=image_motion,
+    )
+    subtitle_file = build_readable_captions(
+        word_srt,
+        project_dir / "subtitles" / "captions.srt",
+    )
+
+    selected_font = (
+        select_subtitle_font(
+            project,
+            font_name,
+        )
+    )
+
+    params = VideoParams(
+        video_subject=project.title,
+        video_script=project.script,
+        video_aspect=project.aspect,
+        video_fit_mode=VideoFitMode(fit_mode),
+        voice_name=project.voice_name,
+        bgm_type="custom" if bgm_file else "",
+        bgm_file="",
+        bgm_volume=float(bgm_volume),
+        subtitle_enabled=True,
+        subtitle_position=subtitle_position,
+        subtitle_display_mode="sentence",
+        subtitle_animation="none",
+        font_name=selected_font,
+        font_size=int(font_size),
+        text_fore_color=text_color,
+        stroke_color=stroke_color,
+        stroke_width=float(stroke_width),
+        n_threads=2,
+    )
+    final_file = (
+        project_dir / "output" / "morrowglass_final.mp4"
+    )
+    bgm_override = ""
+    if bgm_file:
+        candidate = Path(bgm_file)
+        if not candidate.is_file():
+            raise FileNotFoundError(
+                f"BGM file does not exist: {candidate}"
+            )
+        bgm_override = str(candidate.resolve())
+
+    video.generate_video(
+        video_path=str(combined),
+        audio_path=str(audio_file),
+        subtitle_path=str(subtitle_file),
+        output_file=str(final_file),
+        params=params,
+        bgm_file_override=bgm_override,
+    )
+    if (
+        not final_file.is_file()
+        or final_file.stat().st_size == 0
+    ):
+        raise RuntimeError(
+            "final render did not produce a video"
+        )
+
+    project.metadata["subtitle_file"] = str(
+        subtitle_file.resolve()
+    )
+    project.metadata[
+        "subtitle_font"
+    ] = selected_font
+    project.metadata["final_video_file"] = str(
+        final_file.resolve()
+    )
+    project.metadata["bgm_file"] = bgm_override
+    project.save(project_dir / "project.json")
+    return final_file
