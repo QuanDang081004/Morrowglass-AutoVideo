@@ -14,6 +14,7 @@ from app.utils import utils
 
 from .captions import build_readable_captions
 from .models import MorrowglassProject
+from .query_language import likely_vietnamese
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
@@ -364,13 +365,39 @@ def render_scene_timeline(
     return combined
 
 
+_DEFAULT_SUBTITLE_FONT = "BeVietnamPro-Bold.ttf"
+_VIETNAMESE_SUBTITLE_FONT = "BeVietnamPro-Bold.ttf"
+
+
+def select_subtitle_font(
+    project: MorrowglassProject,
+    requested_font: str | None = None,
+) -> str:
+    requested = str(
+        requested_font
+        or ""
+    ).strip()
+
+    if likely_vietnamese(
+        project.script
+    ):
+        return (
+            _VIETNAMESE_SUBTITLE_FONT
+        )
+
+    if requested:
+        return requested
+
+    return _DEFAULT_SUBTITLE_FONT
+
+
 def render_final_video(
     project: MorrowglassProject,
     project_dir: str | Path,
     *,
     bgm_file: str | Path | None = None,
     bgm_volume: float = 0.12,
-    font_name: str = "STHeitiMedium.ttc",
+    font_name: str | None = None,
     font_size: int = 48,
     subtitle_position: str = "bottom",
     text_color: str = "#FFFFFF",
@@ -406,6 +433,13 @@ def render_final_video(
         project_dir / "subtitles" / "captions.srt",
     )
 
+    selected_font = (
+        select_subtitle_font(
+            project,
+            font_name,
+        )
+    )
+
     params = VideoParams(
         video_subject=project.title,
         video_script=project.script,
@@ -419,7 +453,7 @@ def render_final_video(
         subtitle_position=subtitle_position,
         subtitle_display_mode="sentence",
         subtitle_animation="none",
-        font_name=font_name,
+        font_name=selected_font,
         font_size=int(font_size),
         text_fore_color=text_color,
         stroke_color=stroke_color,
@@ -457,6 +491,9 @@ def render_final_video(
     project.metadata["subtitle_file"] = str(
         subtitle_file.resolve()
     )
+    project.metadata[
+        "subtitle_font"
+    ] = selected_font
     project.metadata["final_video_file"] = str(
         final_file.resolve()
     )
