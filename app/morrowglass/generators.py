@@ -419,6 +419,11 @@ def _pick_archive_asset(
     overlap = target_terms & metadata_terms
     specific_overlap = required_terms & metadata_terms
     min_overlap = 2 if len(target_terms) >= 4 else 1
+    min_specific_overlap = (
+        min(2, len(required_terms))
+        if required_terms
+        else 0
+    )
     coverage = len(overlap) / max(1, len(target_terms))
     score = relevance_score(
         asset,
@@ -428,9 +433,9 @@ def _pick_archive_asset(
 
     if (
         len(overlap) < min_overlap
-        or coverage < 0.25
-        or score < 7.0
-        or (required_terms and not specific_overlap)
+        or len(specific_overlap) < min_specific_overlap
+        or coverage < 0.30
+        or score < 8.0
     ):
         scene.qc_notes.append(
             "research rejected: best archive candidate was not specific "
