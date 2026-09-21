@@ -1097,23 +1097,21 @@ with st.sidebar:
             "AI image generation is never invoked by this workflow."
         ),
     )
+    # Image generation is intentionally outside the normal WebUI flow.
+    # Keep the saved value for backward compatibility, but do not offer an
+    # image-generation control that could bypass research-first behavior.
+    comfyui_image_workflow = default_image_workflow_path
+
+    st.caption(
+        "AI image generation is manual: unresolved scenes are exported to "
+        "prompts/MANUAL_IMAGES.md."
+    )
     comfyui_url = st.text_input(
-        "ComfyUI URL",
+        "ComfyUI URL (optional motion video only)",
         value=default_comfyui_url,
     )
-    comfyui_image_workflow = st.text_input(
-        "Image workflow (API JSON)",
-        value=default_image_workflow_path,
-        placeholder=(
-            str(
-                project_dir
-                / "workflows"
-                / "image.json"
-            )
-        ),
-    )
     comfyui_video_workflow = st.text_input(
-        "Video workflow (API JSON)",
+        "Video workflow (optional motion video API JSON)",
         value=default_video_workflow_path,
         placeholder=(
             str(
@@ -1140,7 +1138,7 @@ with st.sidebar:
     st.divider()
     st.subheader("Asset QC")
     image_attempts = st.slider(
-        "Image attempts per scene",
+        "Research attempts per scene",
         min_value=1,
         max_value=4,
         value=2,
