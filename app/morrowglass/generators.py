@@ -13,6 +13,7 @@ from app.services import material
 
 from .archive import (
     archive_asset_keys,
+    archive_metadata_tokens,
     archive_record_keys,
     archive_text_tokens,
     attribution_record,
@@ -159,12 +160,11 @@ def _resolve_image_provider(
             )
         return "mpt_openai", None
 
-    if workflow_path and workflow_path.is_file():
-        return "comfyui", workflow_path
-
-    # Zero-config, free-first fallback. Paid OpenAI-compatible image
-    # generation is never selected implicitly; users must choose it
-    # explicitly so AUTO cannot create surprise charges.
+    # AUTO is deliberately research-only. Even when a ComfyUI workflow is
+    # installed, an ordinary full run must never synthesize a replacement
+    # silently: research the archives first and leave unresolved scenes for
+    # the user's manual AI-image step. ComfyUI remains available only when
+    # explicitly selected with provider="comfyui".
     return "wikimedia", None
 
 
@@ -380,23 +380,63 @@ def _pick_archive_asset(
     required_terms: set[str],
     excluded_asset_keys: set[str],
 ):
+    """Return only a high-confidence archive match for this exact scene.
+
+    Archive title/description metadata is the only evidence available without
+    a vision model, so this deliberately favors false negatives. A weak match
+    is handed to the manual-image queue instead of being inserted into the
+    documentary merely because it shares a country or historical period.
+    """
+    visual_description = str(
+        getattr(scene, "visual_description", "") or ""
+    )
     ranked = rank_archive_assets(
         assets,
         query=base_query,
-        visual_description=base_query,
+        visual_description=visual_description,
         excluded_keys=excluded_asset_keys,
         required_terms=required_terms,
     )
     if not ranked:
+        scene.qc_notes.append(
+            "research rejected: no unused archive candidate contained "
+            "the scene-specific terms"
+        )
         return None
 
     asset = ranked[0]
+    metadata_terms = archive_metadata_tokens(asset)
+    target_terms = archive_text_tokens(
+        " ".join(
+            value
+            for value in (
+                base_query,
+                visual_description,
+            )
+            if value
+        )
+    )
+    overlap = target_terms & metadata_terms
+    specific_overlap = required_terms & metadata_terms
+    min_overlap = 2 if len(target_terms) >= 4 else 1
+    coverage = len(overlap) / max(1, len(target_terms))
     score = relevance_score(
         asset,
         base_query,
-        base_query,
+        visual_description,
     )
-    if score < 4.0:
+
+    if (
+        len(overlap) < min_overlap
+        or coverage < 0.25
+        or score < 7.0
+        or (required_terms and not specific_overlap)
+    ):
+        scene.qc_notes.append(
+            "research rejected: best archive candidate was not specific "
+            f"enough (score={score:.1f}, matched_terms="
+            f"{', '.join(sorted(overlap)) or 'none'})"
+        )
         return None
     return asset
 
@@ -612,7 +652,10 @@ def generate_missing_scene_images(
     comfyui_url: str | None = None,
     comfyui_workflow: str | Path | None = None,
 ) -> list[str]:
-    """Generate scene images and reject/regenerate bad candidates."""
+    """Resolve missing scene images with strict research or an explicit provider.
+
+    provider="auto" is research-only and never invokes generative AI.
+    """
     max_attempts = max(1, int(max_attempts))
     project_dir = Path(project_dir)
     images_dir = project_dir / "images"
@@ -903,6 +946,8 @@ def generate_missing_scene_images(
     if comfy_client:
         project.metadata["comfyui_url"] = comfy_client.base_url
     project.metadata["image_generation_failures"] = failures
+    if provider_name == "wikimedia":
+        project.metadata["research_failures"] = list(failures)
     project.metadata["semantic_qc_requested"] = bool(semantic_qc)
     project.save(project_dir / "project.json")
     return failures
