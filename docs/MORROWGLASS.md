@@ -12,9 +12,11 @@ final script
   -> Kokoro / MPT TTS
   -> faster-whisper word timing
   -> exact scene timeline
-  -> AUTO / HYBRID / MANUAL assets
-     -> ComfyUI image workflow OR MPT image backend
-     -> technical + optional semantic QC/retry
+  -> research-first scene assets
+     -> Wikimedia Commons -> Openverse -> The Met
+     -> strict relevance + duplicate + technical/optional semantic QC
+     -> unresolved scenes -> prompts/MANUAL_IMAGES.md for manual AI generation
+     -> user drops scene_###.png into images/
      -> optional ComfyUI image-to-video for motion scenes
   -> exact-duration scene renderer
   -> incremental per-scene render cache
@@ -47,13 +49,16 @@ final script
 - reuse MPT final compositor for narration, subtitles and BGM
 - final output: `output/morrowglass_final.mp4`
 
-### Phase 4 — AUTO images and QC
-- MPT OpenAI-compatible text-to-image backend is called with the **scene prompt**, not a generic keyword
-- generated files use scene names such as `scene_001.png`
+### Phase 4 — strict research + manual AI handoff
+- AUTO is intentionally **research-only**; it never invokes an AI image generator
+- each scene is searched independently across Wikimedia Commons, Openverse and The Met
+- archive metadata must contain scene-specific terms and pass a conservative relevance threshold
+- duplicate assets are rejected across scenes
 - technical image QC checks decodeability and useful resolution
 - optional OpenAI-compatible vision QC checks scene match, anachronisms and visible generation defects
-- failed candidates are moved to `cache/rejected_images/`
-- AUTO mode retries candidates; HYBRID mode remains available
+- unresolved scenes stay empty instead of receiving a weak visual
+- `prompts/MANUAL_IMAGES.md` and `prompts/MANUAL_IMAGES.json` contain only unresolved scenes, their exact AI prompt, research notes and target filename
+- user-generated images named `scene_001.png`, `scene_002.jpg`, etc. are discovered automatically on the next run
 
 ### Phase 5 — documentary motion, continuity and incremental rebuild
 - Visual Bible can be auto-enriched from the final script
@@ -74,8 +79,8 @@ final script
   - `{{HEIGHT}}`
   - `{{INPUT_IMAGE}}`
   - `{{OUTPUT_PREFIX}}`
-- AUTO image provider can select ComfyUI or fall back to MPT's existing image backend
-- Scene Director marks motion-worthy scenes; only those scenes are sent to the ComfyUI video workflow
+- ComfyUI image generation remains available only as an explicit developer/CLI action; it is never selected by AUTO
+- Scene Director marks motion-worthy scenes; only those scenes are sent to the optional ComfyUI video workflow
 - input images are uploaded to ComfyUI automatically
 - generated video files replace the still image for that scene; failed video scenes safely fall back to the still image
 - project-local defaults:
@@ -99,17 +104,31 @@ The dedicated UI provides:
 - AUTO / HYBRID / MANUAL mode
 - Kokoro voice and speed
 - ComfyUI URL
-- automatic image provider selection
-- ComfyUI image workflow path
+- strict archive research per scene
+- manual AI prompt queue for unresolved scenes
 - ComfyUI video workflow path
 - optional animation of motion scenes
-- image QC/retry
+- research/QC retry
 - scene table with planned asset type
 - image/video preview
 - per-scene replacement upload
 - incremental rendering
 - final render
 - Full run button
+
+## Recommended production workflow
+
+The normal Morrowglass workflow is deliberately human-in-the-loop:
+
+1. Paste the final script and run the pipeline.
+2. Morrowglass plans scenes, creates narration/timing, and researches each scene.
+3. High-confidence archive matches are downloaded and assigned automatically.
+4. Weak or missing matches are **not** used. Open `prompts/MANUAL_IMAGES.md`.
+5. Generate those missing visuals with the AI image tool of your choice.
+6. Save each result using the requested filename, for example `images/scene_014.png`.
+7. Run the same project again; Morrowglass detects the manual images and renders when every scene is ready.
+
+This prevents a broad but incorrect historical image from being inserted merely to keep the pipeline fully automatic.
 
 ## CLI
 
@@ -143,17 +162,19 @@ videos/scene_003.mp4
 
 Run the same command again to render.
 
-AUTO workflow:
+AUTO research workflow:
 
 ```bat
 python morrowglass.py run script.txt --project-dir D:\Morrowglass\Video02 --asset-mode auto --voice kokoro:am_michael
 ```
 
-AUTO image provider priority when `--image-provider auto` is used:
+When `--image-provider auto` is used, Morrowglass searches reusable archive sources in this order:
 
-1. project/global ComfyUI image workflow if present
-2. MoneyPrinterTurbo OpenAI-compatible image backend
-3. error with a clear HYBRID/manual fallback message
+1. Wikimedia Commons
+2. Openverse
+3. The Met
+
+If no high-confidence result survives the relevance and QC checks, the scene is written to `prompts/MANUAL_IMAGES.md` and the run stops before final rendering. AUTO never invokes ComfyUI or another AI image generator.
 
 Force ComfyUI:
 
